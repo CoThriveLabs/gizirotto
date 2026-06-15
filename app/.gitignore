@@ -1,0 +1,108 @@
+# dependencies
+node_modules/
+.pnp
+.pnp.*
+.yarn/*
+!.yarn/patches
+!.yarn/plugins
+!.yarn/releases
+!.yarn/versions
+
+# testing
+coverage/
+playwright-report/
+test-results/
+
+# next.js
+.next/
+out/
+
+# production
+build/
+dist/
+
+# env
+.env*.local
+.env
+
+# debug
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# typescript
+*.tsbuildinfo
+# next-env.d.ts は除外しない（Next.js 公式準拠、コミット対象 / 設計書 v1.3 §C-6-a）
+
+# vercel
+.vercel
+
+# supabase
+supabase/.temp/
+supabase/.branches/
+
+# 知人サンプル PDF（仕様書 v1.6.1 §0-3.5 要件 6 / 依頼書 §3-7）
+# Phase 2.5 フィクスチャ用途のみ。AI 学習・git コミット・PF 公開のいずれも不可
+# Public PF: sample/ 全除外（.gitkeep 例外復活なし）
+sample/
+sample/*.pdf
+
+# Mistral OCR 検証スナップショット（知人 PDF 由来内容を含むため git 管理外）
+scripts/mistral-ocr-response-snapshot.json
+
+# Tesseract 検証結果（生成画像由来、念のため git 管理外）
+scripts/tesseract-test-result.json
+scripts/tesseract-sample-*.png
+scripts/rasterize-scale-result.json
+
+# Phase 2/3 中間検証成果物（知人 PDF 由来データを含む可能性、安全側で全除外）
+tmp/
+
+# 構造抽出レポート生成物（実 PDF 経由の出力）
+scripts/extraction-report*.json
+scripts/extraction-report*.pdf
+
+# PDF 一括除外（フィクスチャは別パスで明示許可運用）
+*.pdf
+!tests/fixtures/**/*.pdf
+
+# Noto Sans CJK Japanese フォント（OFL-1.1）
+# 原本 (16MB) / TTF フォールバックは git 管理外、subset 版 (1.4MB) のみ commit して Vercel 同梱（N-5 follow-up 2、2026-05-28）
+# 開発者ローカル: pnpm prepare-font で download + joyo-kanji-list + subset を一気通貫
+assets/fonts/*.otf
+assets/fonts/*.ttf
+!assets/fonts/.gitkeep
+!assets/fonts/NotoSansCJKjp-Regular-subset.otf
+
+# 常用漢字 Unicode リスト（外部 URL から取得、再配布リスク回避）
+scripts/joyo-kanji-unicodes.txt
+
+# Python venv（プロジェクト内 fonttools 実行用、SKILL.md 推奨運用）
+.venv/
+
+# 退避ファイル（.bak / _*.bak）— Next.js App Router 規約衝突回避等で mv 退避したもの（rm 禁止厳命のため残置、git 管理外）
+*.bak
+public/_*.bak
+
+# メールテンプレ視覚確認用プレビュー HTML（社内確認専用・公開リポには含めない）
+/public/_email-preview/
+
+# 社内アーカイブ（公開リファクタで隠匿した一時診断スクリプト等・公開リポには含めない）
+/_archive/
+
+# Phase 0d セカンドオピニオン（社内専用・公開リポ除外）
+# ※この .gitignore は app/ 直下にあり app 基準で解釈されるためパスは docs/research/...（app/ プレフィックス不要）
+docs/research/_licenses-secondopinion-*.csv
+
+# OS metadata
+.DS_Store
+Thumbs.db
+
+# IDE
+.cursor/
+.vscode/
+.idea/
+
+# Test artifacts
+tests/screenshots/

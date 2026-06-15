@@ -1,0 +1,24 @@
+packages:
+  - .
+# pnpm 10+: postinstall (build script) はデフォルトで全 skip (supply-chain 攻撃対策)。
+# 必要な package のみ onlyBuiltDependencies で明示許可。
+# - esbuild: vitest / tsx / Next.js が native binary 経由で利用
+# - sharp: Next.js Image Optimization のデフォルト image processor
+# - tesseract.js: OCR 経路 (§3-5 scan-extractor) で利用
+# - unrs-resolver: eslint 系の native resolver
+onlyBuiltDependencies:
+  - esbuild
+  - sharp
+  - tesseract.js
+  - unrs-resolver
+# canvas@2.11.2 は unpdf の transitive dep だが peer 扱いで runtime 不要
+# (unpdf は serverless build で canvas を mock 内蔵)。
+# native build (node-pre-gyp / gyp + pixman) が Vercel で fail するため明示 skip。
+# 我々の実 canvas は @napi-rs/canvas (prebuilt binary、postinstall 不要)。
+ignoredBuiltDependencies:
+  - canvas
+ignoredOptionalDependencies:
+  - canvas
+# package.json#pnpm.overrides は pnpm 9.5+ で deprecated。ここに移行。
+overrides:
+  tar: ^7.5.11

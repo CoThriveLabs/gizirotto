@@ -1,0 +1,29 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+          cache-dependency-path: app/pnpm-lock.yaml
+      - name: Install
+        working-directory: app
+        run: pnpm install --frozen-lockfile
+      - name: Type check
+        working-directory: app
+        run: pnpm typecheck
+      - name: Unit tests
+        working-directory: app
+        run: pnpm test

@@ -1,0 +1,314 @@
+{
+  "family_meeting_01.docx": {
+    "fields": [
+      {
+        "name": "meeting_date",
+        "label": "日付",
+        "type": "date",
+        "default": "today",
+        "required": true
+      },
+      {
+        "name": "attendees",
+        "label": "参加者",
+        "type": "list",
+        "required": true
+      },
+      {
+        "name": "agenda",
+        "label": "議題",
+        "type": "list",
+        "required": true
+      },
+      {
+        "name": "decisions",
+        "label": "決定事項",
+        "type": "list",
+        "required": true
+      },
+      {
+        "name": "todos",
+        "label": "TODO",
+        "type": "list",
+        "required": false
+      }
+    ]
+  },
+  "family_meeting_02.docx": {
+    "fields": [
+      {
+        "name": "meeting_date",
+        "label": "日付",
+        "type": "date",
+        "default": "today",
+        "required": true
+      },
+      {
+        "name": "attendees",
+        "label": "参加者",
+        "type": "list",
+        "required": true
+      },
+      {
+        "name": "agenda",
+        "label": "議題",
+        "type": "list",
+        "required": true
+      },
+      {
+        "name": "decisions",
+        "label": "決定事項",
+        "type": "list",
+        "required": true
+      }
+    ]
+  },
+  "family_meeting_03.docx": {
+    "fields": [
+      {
+        "name": "meeting_date",
+        "label": "日付",
+        "type": "date",
+        "default": "today",
+        "required": true
+      },
+      {
+        "name": "attendees",
+        "label": "参加者",
+        "type": "list",
+        "required": true
+      },
+      {
+        "name": "agenda",
+        "label": "議題",
+        "type": "list",
+        "required": true
+      },
+      {
+        "name": "next_actions",
+        "label": "次回までのアクション",
+        "type": "list",
+        "required": false
+      }
+    ]
+  },
+  "family_meeting_04.docx": {
+    "fields": [
+      {
+        "name": "meeting_date",
+        "label": "日付",
+        "type": "date",
+        "default": "today",
+        "required": true
+      },
+      {
+        "name": "attendees",
+        "label": "参加者",
+        "type": "list",
+        "required": true
+      },
+      {
+        "name": "topics",
+        "label": "話し合いトピック",
+        "type": "list",
+        "required": true
+      },
+      {
+        "name": "memo",
+        "label": "メモ",
+        "type": "text",
+        "required": false
+      }
+    ]
+  },
+  "family_meeting_05.docx": {
+    "fields": [
+      {
+        "name": "meeting_date",
+        "label": "日付",
+        "type": "date",
+        "default": "today",
+        "required": true
+      },
+      {
+        "name": "attendees",
+        "label": "参加者",
+        "type": "list",
+        "required": true
+      },
+      {
+        "name": "agenda",
+        "label": "議題",
+        "type": "list",
+        "required": true
+      },
+      {
+        "name": "decisions",
+        "label": "決定事項",
+        "type": "list",
+        "required": true
+      },
+      {
+        "name": "todos",
+        "label": "宿題",
+        "type": "list",
+        "required": false
+      }
+    ]
+  },
+  "child_schedule_01.docx": {
+    "fields": [
+      {
+        "name": "event_date",
+        "label": "日付",
+        "type": "date",
+        "default": "today",
+        "required": true
+      },
+      {
+        "name": "place",
+        "label": "場所",
+        "type": "text",
+        "required": true
+      },
+      {
+        "name": "items",
+        "label": "持ち物",
+        "type": "list",
+        "required": false
+      },
+      {
+        "name": "escort",
+        "label": "送迎担当",
+        "type": "text",
+        "required": false
+      },
+      {
+        "name": "notes",
+        "label": "注意事項",
+        "type": "list",
+        "required": false
+      }
+    ]
+  },
+  "child_schedule_02.docx": {
+    "fields": [
+      {
+        "name": "event_date",
+        "label": "日付",
+        "type": "date",
+        "default": "today",
+        "required": true
+      },
+      {
+        "name": "place",
+        "label": "場所",
+        "type": "text",
+        "required": true
+      },
+      {
+        "name": "items",
+        "label": "持ち物",
+        "type": "list",
+        "required": false
+      },
+      {
+        "name": "escort",
+        "label": "送迎担当",
+        "type": "text",
+        "required": false
+      }
+    ]
+  },
+  "child_schedule_03.docx": {
+    "fields": [
+      {
+        "name": "event_date",
+        "label": "日付",
+        "type": "date",
+        "default": "today",
+        "required": true
+      },
+      {
+        "name": "place",
+        "label": "場所",
+        "type": "text",
+        "required": true
+      },
+      {
+        "name": "items",
+        "label": "持ち物",
+        "type": "list",
+        "required": false
+      },
+      {
+        "name": "notes",
+        "label": "注意事項",
+        "type": "list",
+        "required": false
+      }
+    ]
+  },
+  "budget_report_01.docx": {
+    "fields": [
+      {
+        "name": "month",
+        "label": "月度",
+        "type": "text",
+        "required": true
+      },
+      {
+        "name": "income",
+        "label": "収入",
+        "type": "text",
+        "required": true
+      },
+      {
+        "name": "expense",
+        "label": "支出",
+        "type": "text",
+        "required": true
+      },
+      {
+        "name": "savings",
+        "label": "貯蓄",
+        "type": "text",
+        "required": false
+      },
+      {
+        "name": "next_plan",
+        "label": "次月予定",
+        "type": "list",
+        "required": false
+      }
+    ]
+  },
+  "budget_report_02.docx": {
+    "fields": [
+      {
+        "name": "month",
+        "label": "月度",
+        "type": "text",
+        "required": true
+      },
+      {
+        "name": "income",
+        "label": "収入",
+        "type": "text",
+        "required": true
+      },
+      {
+        "name": "expense",
+        "label": "支出",
+        "type": "text",
+        "required": true
+      },
+      {
+        "name": "savings",
+        "label": "貯蓄",
+        "type": "text",
+        "required": false
+      }
+    ]
+  }
+}

@@ -1,0 +1,94 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --gizirotto-blue-50: #EEF4FA;
+  --gizirotto-blue-100: #E0EBF5;
+  --gizirotto-blue-500: #5B89C2;
+  --gizirotto-blue-900: #1E4470;
+  --accent-warm: #E8A87C;
+}
+
+body {
+  font-size: 16px;
+  line-height: 1.75;
+}
+
+/* ぎじろっとキャラ。think=思考中ふわふわ / pop=出現時ぴょこん。 */
+@keyframes gizirotto-think {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-3px); }
+}
+@keyframes gizirotto-pop {
+  0% { transform: scale(0.3); opacity: 0; }
+  60% { transform: scale(1.15); opacity: 1; }
+  100% { transform: scale(1); }
+}
+.gizirotto-think { animation: gizirotto-think 1.1s ease-in-out infinite; }
+.gizirotto-pop { animation: gizirotto-pop 0.45s ease-out; }
+
+@media (prefers-reduced-motion: reduce) {
+  .gizirotto-think, .gizirotto-pop { animation: none; }
+}
+
+/* 規約・プライバシーポリシーページ用タイポグラフィ。
+   tailwindcss/typography 未導入のため自前定義。レスポンシブ・モバイル可読性重視。 */
+.legal-content h1 {
+  font-family: var(--font-serif, "Noto Serif JP"), serif;
+  color: var(--gizirotto-blue-900);
+  font-size: 1.5rem;
+  font-weight: 700;
+  line-height: 1.4;
+  margin-bottom: 1rem;
+}
+@media (min-width: 640px) {
+  .legal-content h1 { font-size: 1.875rem; }
+}
+.legal-content h2 {
+  font-family: var(--font-serif, "Noto Serif JP"), serif;
+  color: var(--gizirotto-blue-900);
+  font-size: 1.125rem;
+  font-weight: 700;
+  margin-top: 2rem;
+  margin-bottom: 0.75rem;
+  padding-bottom: 0.25rem;
+  border-bottom: 1px solid var(--gizirotto-blue-100);
+}
+@media (min-width: 640px) {
+  .legal-content h2 { font-size: 1.25rem; }
+}
+.legal-content h3 {
+  color: var(--gizirotto-blue-900);
+  font-size: 1rem;
+  font-weight: 700;
+  margin-top: 1rem;
+  margin-bottom: 0.5rem;
+}
+@media (min-width: 640px) {
+  .legal-content h3 { font-size: 1.125rem; }
+}
+.legal-content p { margin: 0.75rem 0; }
+.legal-content strong { color: #111827; font-weight: 700; }
+.legal-content ol { list-style: decimal; padding-left: 1.5rem; margin: 0.75rem 0; }
+.legal-content ul { list-style: disc; padding-left: 1.5rem; margin: 0.75rem 0; }
+.legal-content li { margin: 0.25rem 0; }
+.legal-content a { color: var(--gizirotto-blue-900); text-decoration: underline; }
+.legal-content a:hover { color: #2D5A8C; }
+.legal-content hr { border: 0; border-top: 1px solid var(--gizirotto-blue-100); margin: 2rem 0; }
+.legal-content table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 1rem 0;
+  font-size: 0.875rem;
+  display: block;
+  overflow-x: auto;
+}
+.legal-content thead { background: var(--gizirotto-blue-50); }
+.legal-content th, .legal-content td {
+  border: 1px solid var(--gizirotto-blue-100);
+  padding: 0.5rem 0.75rem;
+  text-align: left;
+  vertical-align: top;
+}
+.legal-content th { font-weight: 700; color: var(--gizirotto-blue-900); }

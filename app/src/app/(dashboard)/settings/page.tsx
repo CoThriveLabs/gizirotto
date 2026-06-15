@@ -1,0 +1,37 @@
+import { createSupabaseServerClient } from '@/lib/supabase/server'
+import { redirect } from 'next/navigation'
+import { PasswordSettingsForm } from './_components/PasswordSettingsForm'
+
+export const dynamic = 'force-dynamic'
+
+export const metadata = {
+  title: '設定',
+  robots: { index: false, follow: false },
+}
+
+export default async function SettingsPage() {
+  const supabase = await createSupabaseServerClient()
+  const {
+    data: { user },
+  } = await supabase.auth.getUser()
+  if (!user) redirect('/login')
+
+  return (
+    <div className="max-w-2xl mx-auto px-4 py-8 space-y-8">
+      <header>
+        <h1 className="text-xl font-serif text-gizirotto-blue-900">設定</h1>
+        <p className="text-xs text-gray-500 mt-1">{user.email}</p>
+      </header>
+
+      <section className="bg-white border border-gizirotto-blue-100 rounded-lg p-6 space-y-4">
+        <div>
+          <h2 className="text-lg font-serif text-gizirotto-blue-900">パスワード</h2>
+          <p className="text-xs text-gray-500 mt-1">
+            パスワードを設定すると、次回からメール認証なしでログインできます。
+          </p>
+        </div>
+        <PasswordSettingsForm />
+      </section>
+    </div>
+  )
+}

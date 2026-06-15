@@ -1,0 +1,30 @@
+name: Bug report
+description: 不具合を報告する
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        不具合の報告ありがとうございます。再現に必要な情報をご記入ください。
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: 何が起きましたか？
+      description: 発生した問題と期待した動作を教えてください。
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: 再現手順
+      description: 1. ... 2. ... 3. ...
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: 環境
+      description: ブラウザ・OS など
+    validations:
+      required: false

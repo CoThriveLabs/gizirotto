@@ -1,0 +1,24 @@
+name: ping
+
+# Supabase 無料枠 pause 回避（1 週間アクティビティなしで自動 pause になるため週 1 で叩く）
+on:
+  schedule:
+    - cron: '17 3 * * 1' # 毎週月曜 03:17 UTC
+  workflow_dispatch:
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Curl /api/ping
+        env:
+          APP_URL: ${{ vars.NEXT_PUBLIC_APP_URL }}
+          PING_SECRET: ${{ secrets.PING_SECRET }}
+        run: |
+          if [ -z "$APP_URL" ]; then
+            echo "NEXT_PUBLIC_APP_URL is not set"
+            exit 1
+          fi
+          curl -fsS \
+            -H "Authorization: Bearer ${PING_SECRET}" \
+            "${APP_URL%/}/api/ping"

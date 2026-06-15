@@ -1,0 +1,13 @@
+version: 2
+updates:
+  - package-ecosystem: "npm"
+    directory: "/app"          # package.json は app/ 配下（リポ構造に追従）
+    schedule:
+      interval: "monthly"
+    open-pull-requests-limit: 3
+    labels:
+      - "dependencies"
+    commit-message:
+      prefix: "deps"
+# セキュリティアップデートは GitHub の Dependabot security updates
+# （Settings > Code security）で常時有効化する。本ファイルは version updates の設定。

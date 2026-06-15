@@ -1,0 +1,104 @@
+# minutes-app リポジトリルート .gitignore
+# 個別の詳細ルールは app/.gitignore も参照（Next.js プロジェクトは app/ サブディレクトリ）
+
+# OS / IDE
+.DS_Store
+Thumbs.db
+desktop.ini
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Node / pnpm（サブディレクトリで再宣言だが念のため）
+node_modules/
+
+# env（絶対 commit 禁止）
+.env
+.env.*
+!.env.example
+
+# 知人サンプル PDF / 個人情報含む可能性のあるデータ（仕様書 v1.6.1 §0-3.5 / mistake.md）
+# Phase 2.5 フィクスチャ用途のみ。AI 学習・git コミット・PF 公開のいずれも不可
+# Public PF: app/sample/ 全除外（.gitkeep の例外復活も無し）
+app/sample/*.pdf
+app/sample/**/*.pdf
+
+# 中間検証成果物（知人 PDF 由来データを含む可能性あり、安全側で全除外）
+app/tmp/
+
+# Mistral OCR / Tesseract / rasterize の生 response（PDF 内容混入リスク）
+app/scripts/mistral-ocr-response-snapshot.json
+app/scripts/tesseract-test-result.json
+app/scripts/tesseract-sample-*.png
+app/scripts/rasterize-scale-result.json
+app/scripts/extraction-report*.json
+app/scripts/extraction-report*.pdf
+
+# PDF 一括除外（必要なフィクスチャは別パスで明示管理）
+*.pdf
+# 合成テスト用 fixtures のみ例外許可（親除外は子 .gitignore の否定で復活しないため、ここで明示）
+!app/tests/fixtures/**/*.pdf
+
+# Noto Sans CJK JP フォント（OFL-1.1、再配布責任回避）
+app/assets/fonts/*.otf
+app/assets/fonts/*.ttf
+!app/assets/fonts/.gitkeep
+
+# 常用漢字 Unicode リスト（外部 URL から取得、再配布リスク回避）
+app/scripts/joyo-kanji-unicodes.txt
+
+# Python venv
+.venv/
+app/.venv/
+
+# Next.js / build artifacts
+app/.next/
+app/out/
+app/build/
+app/dist/
+app/.vercel/
+
+# testing artifacts
+app/coverage/
+app/playwright-report/
+app/test-results/
+
+# typescript
+*.tsbuildinfo
+
+# debug
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# Internal commit message drafts
+.git-*-msg.txt
+*.git-s*-msg.txt
+
+# supabase
+app/supabase/.temp/
+app/supabase/.branches/
+
+# ============================================================
+# 公開PF化 Phase 3: docs ホワイトリスト方式（社内設計書を非公開）
+# app/docs/ はデフォルト全除外。公開可と判定したものだけ ! で許可する。
+# 新規追加の設計書・調査文書はデフォルト非公開（fail-safe）。
+# ARCHITECTURE.md はリポルートに別途配置するため、ここでの許可は不要。
+# 注: リポルート直下 docs/ は実在しない（v1.1 補正）。除外対象は app/docs/ のみ。
+# ============================================================
+/app/docs/**
+
+# 内部設計資料（HTML 仕様書・リポルート直下）
+# 実在するのは spec.html.bak.* のみ（無印 spec.html は存在しない・v1.1 補正）
+/spec.html.bak.*
+
+# テスト中間生成物（fixture HTML はスクリプトが都度生成するため非公開）
+/app/tests/fixtures/_html_tmp/
+
+# 未確定の draft 設定（条件付き LFS 運用メモ・内部参照含む）
+/app/.gitattributes.draft
+
+# Public PF: exclude internal sample assets entirely
+app/sample/
