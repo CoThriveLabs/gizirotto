@@ -5,8 +5,31 @@ import './globals.css'
 import { ConsentGate } from '@/components/legal/ConsentGate'
 
 export const metadata: Metadata = {
+  metadataBase: new URL('https://gizirotto.cothrivelabs.com'),
   title: 'ぎじろっと',
   description: '家族・少人数グループの議事録を AI が下書き・整形する家庭用アプリ',
+  openGraph: {
+    title: 'ぎじろっと',
+    description: '家族・少人数グループの議事録を AI が下書き・整形する家庭用アプリ',
+    url: 'https://gizirotto.cothrivelabs.com',
+    siteName: 'ぎじろっと',
+    images: [
+      {
+        url: '/og-image.png',
+        width: 1200,
+        height: 630,
+        alt: 'ぎじろっと - 家族の議事録 AI アシスタント',
+      },
+    ],
+    locale: 'ja_JP',
+    type: 'website',
+  },
+  twitter: {
+    card: 'summary_large_image',
+    title: 'ぎじろっと',
+    description: '家族・少人数グループの議事録を AI が下書き・整形する家庭用アプリ',
+    images: ['/og-image.png'],
+  },
 }
 
 // 同意モーダルを出さない（未認証 or 規約ページ自体）パス。
