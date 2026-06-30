@@ -131,10 +131,13 @@ function widthToScale(effectiveWidth: number): number {
 export default function BboxEditorClient({
   templateId,
   backHref = '/templates',
+  readOnly = false,
 }: {
   templateId: string
   /** 「一覧へ」戻り先（未保存ガード経由で遷移する・追加UX-C #19）。 */
   backHref?: string
+  /** true のとき保存・追加・削除等の変更操作 UI を非表示にし閲覧専用にする。 */
+  readOnly?: boolean
 }) {
   const router = useRouter()
   const [phase, setPhase] = useState<Phase>('loading')
@@ -546,7 +549,8 @@ export default function BboxEditorClient({
             グリッド表示
           </button>
 
-          {mode === 'field' ? (
+          {/* readOnly=true のとき変更操作 UI を非表示にし閲覧専用にする。 */}
+          {!readOnly && mode === 'field' ? (
             <>
               {/* #20 全モードUI統一: 戻る/進む（記入欄スタック）。配置は 3 モード共通。 */}
               <UndoRedoButtons
@@ -583,7 +587,7 @@ export default function BboxEditorClient({
                 </button>
               </div>
             </>
-          ) : mode === 'whiteout' ? (
+          ) : !readOnly && mode === 'whiteout' ? (
             <>
               {/* 戻る/進む（白塗りスタック）。配置は記入欄と同一順。 */}
               <UndoRedoButtons
@@ -613,7 +617,7 @@ export default function BboxEditorClient({
                 </button>
               </div>
             </>
-          ) : (
+          ) : !readOnly && mode === 'fixed' ? (
             <>
               {/* #20 全モードUI統一: 戻る/進む（固定テキスト独立スタック）。配置は記入欄と同一順。 */}
               <UndoRedoButtons
@@ -643,7 +647,7 @@ export default function BboxEditorClient({
                 </button>
               </div>
             </>
-          )}
+          ) : null}
         </div>
       </div>
 

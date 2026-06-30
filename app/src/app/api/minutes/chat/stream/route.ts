@@ -16,6 +16,11 @@ import {
   logAiUsage,
   resolveFamilyIdByUser,
 } from '@/lib/ai-usage-guard'
+import { createSupabaseServiceClient } from '@/lib/supabase/service'
+import { getClientIp } from '@/lib/client-ip'
+import { recordGuestAiUsage } from '@/lib/guest-metrics'
+import { isBuiltinTemplate } from '@/lib/templates/builtin-ids'
+import { guestAiGate } from '@/lib/guest-gate'
 
 export const runtime = 'edge'
 
@@ -30,6 +35,7 @@ const requestSchema = z.object({
   template_id: z.string().uuid(),
   history: z.array(messageSchema).max(50),
   latest_user_message: z.string().min(1).max(8000),
+  turnstileToken: z.string().optional(),
 })
 
 /**
@@ -46,10 +52,8 @@ export async function POST(req: Request) {
   const {
     data: { user },
   } = await supabase.auth.getUser()
-  if (!user) {
-    return jsonError('UNAUTHENTICATED', 401)
-  }
 
+  // Parse body first so Turnstile token is available before consuming quota.
   let body: unknown
   try {
     body = await req.json()
@@ -61,8 +65,33 @@ export async function POST(req: Request) {
     return jsonError('INVALID_REQUEST', 400, parsed.error.flatten())
   }
 
-  // template の fields を取得（system suffix 構築用、RLS で自家族のみ可視）
-  const { data: tpl, error: tplError } = await supabase
+  // Track familyId; null for guests so ai_usage_log insert is skipped.
+  let familyId: string | null = null
+  // Resolve IP at handler scope so both guest metrics and the rate-limiter share the same value.
+  const ip = getClientIp(req)
+
+  if (!user) {
+    const gate = await guestAiGate({
+      token: parsed.data.turnstileToken,
+      ip,
+      referer: req.headers.get('referer') ?? undefined,
+    })
+    if (!gate.ok) return gate.response
+
+    // Guard against arbitrary family template access via RLS-bypassing service client.
+    // service client bypasses RLS; safe only because the guest path is gated to builtin templates here.
+    if (!isBuiltinTemplate(parsed.data.template_id)) {
+      return jsonError('TEMPLATE_NOT_ALLOWED', 403)
+    }
+    // Guest passes: continue with familyId=null.
+  } else {
+    familyId = await resolveFamilyIdByUser(user.id)
+  }
+
+  // Fetch template fields. Guests can only reach builtin templates (enforced at page level),
+  // so use service client here to bypass RLS for unauthenticated requests.
+  const templateClient = user ? supabase : createSupabaseServiceClient()
+  const { data: tpl, error: tplError } = await templateClient
     .from('templates')
     .select('fields')
     .eq('id', parsed.data.template_id)
@@ -75,14 +104,15 @@ export async function POST(req: Request) {
     return jsonError('TEMPLATE_HAS_NO_FIELDS', 400)
   }
 
-  // 3 階層 atomic check (family / user / global)
-  const familyId = await resolveFamilyIdByUser(user.id)
-  const usageCheck = await checkAiUsage({ familyId, userId: user.id })
-  if (usageCheck.exceeded) {
-    return new Response(JSON.stringify(aiLimitExceededBody(usageCheck)), {
-      status: 429,
-      headers: { 'content-type': 'application/json' },
-    })
+  // Authenticated path: 3-layer atomic usage check (family / user / global).
+  if (user) {
+    const usageCheck = await checkAiUsage({ familyId, userId: user.id })
+    if (usageCheck.exceeded) {
+      return new Response(JSON.stringify(aiLimitExceededBody(usageCheck)), {
+        status: 429,
+        headers: { 'content-type': 'application/json' },
+      })
+    }
   }
 
   const apiKey = process.env.ANTHROPIC_API_KEY
@@ -160,8 +190,9 @@ export async function POST(req: Request) {
         )
       } finally {
         controller.close()
-        // ai_usage_log INSERT (best-effort)
-        if (familyId) {
+        // ai_usage_log INSERT (best-effort). Skip for guests (familyId is null).
+        // Claude Haiku 3.5 estimate: input $3 / output $15 per 1M tokens.
+        if (familyId && user) {
           const cost = (inputTokens * 3 + outputTokens * 15) / 1_000_000
           void logAiUsage({
             familyId,
@@ -170,6 +201,13 @@ export async function POST(req: Request) {
             inputTokens,
             outputTokens,
             costUsdEstimate: cost,
+          })
+        } else {
+          // Best-effort guest usage metrics — failure must not affect the response.
+          void recordGuestAiUsage({
+            endpoint: 'chat-stream',
+            inputTokens,
+            outputTokens,
           })
         }
       }
@@ -195,8 +233,8 @@ function jsonError(code: string, status: number, detail?: unknown): Response {
 
 function extractFieldList(raw: unknown): Array<{ name: string; label: string }> {
   if (!raw) return []
-  // templates.fields は新形式 `{ fields: [...] }` だが、Phase 5a 以前の
-  // テンプレは配列直書き `[...]` で保存されている個体があり、両方受ける。
+  // templates.fields は新形式 `{ fields: [...] }` だが、
+  // 旧形式の配列直書き `[...]` で保存されている個体があり、両方受ける。
   const arr: unknown = Array.isArray(raw)
     ? raw
     : typeof raw === 'object'

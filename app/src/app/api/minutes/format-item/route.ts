@@ -14,6 +14,9 @@ import {
   logAiUsage,
   resolveFamilyIdByUser,
 } from '@/lib/ai-usage-guard'
+import { getClientIp } from '@/lib/client-ip'
+import { recordGuestAiUsage } from '@/lib/guest-metrics'
+import { guestAiGate } from '@/lib/guest-gate'
 
 export const runtime = 'edge'
 
@@ -23,6 +26,7 @@ const requestSchema = z
     raw_text: z.string().min(1).max(8000),
     tone: z.enum(['omakase', 'calm', 'polite', 'bright', 'custom']),
     custom_text: z.string().trim().min(1).max(200).optional(),
+    turnstileToken: z.string().optional(),
   })
   .refine(
     (d) => d.tone !== 'custom' || (d.custom_text && d.custom_text.length > 0),
@@ -41,51 +45,53 @@ export async function POST(req: Request) {
   const {
     data: { user },
   } = await supabase.auth.getUser()
-  if (!user) {
-    return new Response(JSON.stringify({ error: 'UNAUTHENTICATED' }), {
-      status: 401,
-      headers: { 'content-type': 'application/json' },
-    })
-  }
 
+  // Parse body first so Turnstile token is available before consuming quota.
   let body: unknown
   try {
     body = await req.json()
   } catch {
-    return new Response(JSON.stringify({ error: 'INVALID_JSON' }), {
-      status: 400,
-      headers: { 'content-type': 'application/json' },
-    })
+    return jsonError('INVALID_JSON', 400)
   }
 
   const parsed = requestSchema.safeParse(body)
   if (!parsed.success) {
-    return new Response(
-      JSON.stringify({ error: 'INVALID_REQUEST', detail: parsed.error.flatten() }),
-      { status: 400, headers: { 'content-type': 'application/json' } },
-    )
+    return jsonError('INVALID_REQUEST', 400, parsed.error.flatten())
   }
 
-  // 3 階層 atomic check (family / user / global)
-  // 失敗 (exceeded=true) なら 429 + AI_LIMIT_EXCEEDED + scope を返す。
-  // family_id は middleware の x-family-id ヘッダを使わず service role で再解決する
-  // (route handler から確実に取るため・解説は ai-usage-guard.ts 参照)。
-  const familyId = await resolveFamilyIdByUser(user.id)
-  const usageCheck = await checkAiUsage({ familyId, userId: user.id })
-  if (usageCheck.exceeded) {
-    return new Response(JSON.stringify(aiLimitExceededBody(usageCheck)), {
-      status: 429,
-      headers: { 'content-type': 'application/json' },
+  // Track whether this is a guest (unauthenticated) request. familyId is null for guests.
+  let familyId: string | null = null
+  // Resolve IP at handler scope so both guest metrics and the rate-limiter share the same value.
+  const ip = getClientIp(req)
+
+  if (!user) {
+    const gate = await guestAiGate({
+      token: parsed.data.turnstileToken,
+      ip,
+      referer: req.headers.get('referer') ?? undefined,
     })
+    if (!gate.ok) return gate.response
+    // Guest passes: continue with familyId=null, skip ai_usage_log insert.
+  } else {
+    familyId = await resolveFamilyIdByUser(user.id)
+  }
+
+  // Authenticated path: 3-layer atomic usage check (family / user / global).
+  // family_id is resolved via service role to bypass RLS (see ai-usage-guard.ts).
+  if (user) {
+    const usageCheck = await checkAiUsage({ familyId, userId: user.id })
+    if (usageCheck.exceeded) {
+      return new Response(JSON.stringify(aiLimitExceededBody(usageCheck)), {
+        status: 429,
+        headers: { 'content-type': 'application/json' },
+      })
+    }
   }
 
   const apiKey = process.env.ANTHROPIC_API_KEY
   const model = process.env.ANTHROPIC_MODEL
   if (!apiKey || !model) {
-    return new Response(JSON.stringify({ error: 'AI_NOT_CONFIGURED' }), {
-      status: 500,
-      headers: { 'content-type': 'application/json' },
-    })
+    return jsonError('AI_NOT_CONFIGURED', 500)
   }
 
   const client = new Anthropic({ apiKey })
@@ -153,9 +159,9 @@ export async function POST(req: Request) {
         )
       } finally {
         controller.close()
-        // ai_usage_log INSERT (best-effort)
-        // 料金: Claude haiku 3.5 想定 input $3 / output $15 per 1M tokens
-        if (familyId) {
+        // ai_usage_log INSERT (best-effort). Skip for guests (familyId is null).
+        // Claude Haiku 3.5 estimate: input $3 / output $15 per 1M tokens.
+        if (familyId && user) {
           const cost =
             (inputTokens * 3 + outputTokens * 15) / 1_000_000
           void logAiUsage({
@@ -165,6 +171,13 @@ export async function POST(req: Request) {
             inputTokens,
             outputTokens,
             costUsdEstimate: cost,
+          })
+        } else {
+          // Best-effort guest usage metrics — failure must not affect the response.
+          void recordGuestAiUsage({
+            endpoint: 'format-item',
+            inputTokens,
+            outputTokens,
           })
         }
       }
@@ -179,4 +192,11 @@ export async function POST(req: Request) {
       'x-accel-buffering': 'no',
     },
   })
+}
+
+function jsonError(code: string, status: number, detail?: unknown): Response {
+  return new Response(
+    JSON.stringify(detail === undefined ? { error: code } : { error: code, detail }),
+    { status, headers: { 'content-type': 'application/json' } },
+  )
 }

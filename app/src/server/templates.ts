@@ -1,6 +1,7 @@
 'use server'
 
 import { z } from 'zod'
+import { headers } from 'next/headers'
 import { createSupabaseServerClient } from '@/lib/supabase/server'
 import { getParser } from '@/lib/parsers'
 import { extractTemplateStructure } from '@/lib/ai/structure-extractor'
@@ -8,7 +9,9 @@ import { generatePlaceholderDocx } from '@/lib/ai/template-processor'
 import { decodeAccessTokenClaims } from '@/lib/jwt-claims'
 import { convertDocxToBlankPdf } from '@/lib/cloudconvert'
 import { analyzePdfFull } from '@/lib/parsers/pdf/analyze-pipeline'
+import { imageToA4Pdf } from '@/lib/parsers/image/image-to-pdf'
 import { generateTemplateThumbnail } from '@/lib/pdf-output/template-thumbnail'
+import { renderPdfToImages, getPdfNumPages } from '@/lib/pdf-output/image-renderer'
 import type { TemplateField } from '@/lib/ai/schemas/template-schema'
 import type { PdfField } from '@/lib/ai/schemas/pdf-field-schema'
 import {
@@ -29,29 +32,42 @@ import {
   mapDbErrorToResourceLimit,
   ResourceLimitError,
 } from '@/lib/db-error-mapper'
+import { ipBurstLimit, guestTemplateLimit } from '@/lib/ratelimit'
+import { verifyTurnstile } from '@/lib/turnstile'
+import { getClientIpFromHeaders } from '@/lib/client-ip'
 
 const MAX_FILE_BYTES = 10 * 1024 * 1024 // 10MB（家族議事録テンプレで十分余裕）
 
-// §4-4: jsonb 格納フィールドの discriminated union（union 全体を表す型）。
+// jsonb 格納フィールドの discriminated union（union 全体を表す型）。
 // 判別子は bbox の有無（PdfField のみ bbox を持つ）。
 type TemplateFieldForDb = TemplateField | PdfField
 
 const uploadSchema = z.object({
   name: z.string().min(1).max(40),
-  format: z.enum(['docx', 'pdf']),
+  format: z.enum(['docx', 'pdf', 'image']),
   fileBase64: z.string().min(1),
-  // 仕様書 v1.6.1 §0-3.5 要件 1 / 設計書 v1.4.2 §3-6-b: アップロード UI の経路選択。
-  // PDF 専用、docx では無視。
+  // PDF/image 専用、docx では無視。
   //   'A' (default): 未書込原本 → そのまま _blank.pdf にコピー（既存挙動）
   //   'B':           書込済 → アップロード後に /whiteout-preview + /whiteout-apply で白塗り化
   inputPathType: z.enum(['A', 'B']).optional(),
+  // image format のときのみ必須。
+  imageMime: z.enum(['image/jpeg', 'image/png', 'image/webp']).optional(),
+}).superRefine((val, ctx) => {
+  if (val.format === 'image' && !val.imageMime) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'imageMime is required when format is image',
+      path: ['imageMime'],
+    })
+  }
 })
 
 export type UploadTemplateInput = z.infer<typeof uploadSchema>
 
-const CONTENT_TYPE: Record<'docx' | 'pdf', string> = {
+const CONTENT_TYPE: Record<'docx' | 'pdf' | 'image', string> = {
   docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
   pdf: 'application/pdf',
+  image: 'application/pdf',
 }
 
 const PROCESSED_CONTENT_TYPE =
@@ -66,7 +82,7 @@ const PROCESSED_CONTENT_TYPE =
  * 5. templates テーブルに INSERT
  */
 export async function uploadTemplate(input: UploadTemplateInput) {
-  const { name, format, fileBase64, inputPathType: requestedPath } =
+  const { name, format, fileBase64, inputPathType: requestedPath, imageMime } =
     uploadSchema.parse(input)
   const supabase = await createSupabaseServerClient()
 
@@ -83,38 +99,71 @@ export async function uploadTemplate(input: UploadTemplateInput) {
   if (fileBuf.byteLength === 0) throw new Error('EMPTY_FILE')
   if (fileBuf.byteLength > MAX_FILE_BYTES) throw new Error('FILE_TOO_LARGE')
 
+  // 画像テンプレ経路: 元画像を PDF 変換してから PDF 経路に合流する。
+  // 以降の Storage/DB 処理はすべて PDF として扱う（source_format='pdf', origin_format='image'）。
+  let effectiveFileBuf = fileBuf
+  let originFormat: string | null = null
+  let imageRawExt: string | null = null
+
+  if (format === 'image') {
+    const imageBytes = new Uint8Array(fileBuf.byteLength)
+    imageBytes.set(fileBuf)
+    const pdfBytes = await imageToA4Pdf(
+      imageBytes,
+      imageMime as 'image/jpeg' | 'image/png' | 'image/webp',
+    )
+    effectiveFileBuf = Buffer.from(pdfBytes)
+    originFormat = 'image'
+    // 元画像の拡張子を MIME から決定
+    imageRawExt = imageMime === 'image/jpeg' ? 'jpg' : imageMime === 'image/png' ? 'png' : 'webp'
+  }
+
+  // image は内部的に pdf として処理する
+  const effectiveFormat = format === 'image' ? 'pdf' : format
+
   // 1. パース
-  const parser = getParser(format)
+  const parser = getParser(effectiveFormat)
   const intermediate = await parser.parse(
-    fileBuf.buffer.slice(
-      fileBuf.byteOffset,
-      fileBuf.byteOffset + fileBuf.byteLength,
+    effectiveFileBuf.buffer.slice(
+      effectiveFileBuf.byteOffset,
+      effectiveFileBuf.byteOffset + effectiveFileBuf.byteLength,
     ),
   )
 
   // 2. 構造抽出
   //    docx は従来どおり汎用 TemplateSchema 抽出。
-  //    PDF は placeholder docx 生成のため schema は引き続き作るが、
+  //    PDF / image は placeholder docx 生成のため schema は引き続き作るが、
   //    DB に格納する fields は後段の PDF 専用パイプライン（analyzePdfFull）で
-  //    bbox 付き実構造に差し替える（N-6 配線、2026-05-29）。
+  //    bbox 付き実構造に差し替える。
   const schema = await extractTemplateStructure(intermediate)
 
   // 3. placeholder docx 生成
   const processedDocx = await generatePlaceholderDocx(schema, name)
 
-  // DB に入れる fields。docx は schema.fields、PDF は analyzePdfFull の結果で上書きする。
-  // jsonb カラムなので docx(TemplateField) / pdf(PdfField) の discriminated union を許容（§4-4）。
+  // DB に入れる fields。docx は schema.fields、PDF/image は analyzePdfFull の結果で上書きする。
   let fieldsForDb: TemplateFieldForDb[] = schema.fields
 
   // 4. Storage 保存
   const templateId = crypto.randomUUID()
-  const rawPath = `${familyId}/${templateId}.${format}`
+  // image は元画像を raw に保存し、変換 PDF は processed に保存する
+  const rawPath =
+    format === 'image' && imageRawExt
+      ? `${familyId}/${templateId}.${imageRawExt}`
+      : `${familyId}/${templateId}.${effectiveFormat}`
   const processedPath = `${familyId}/${templateId}_processed.docx`
+
+  // 元ファイル（image の場合は元画像バイト）を raw に保存
+  const rawBlob =
+    format === 'image'
+      ? new Blob([new Uint8Array(fileBuf)])
+      : new Blob([new Uint8Array(effectiveFileBuf)])
+  const rawContentType =
+    format === 'image' ? (imageMime as string) : CONTENT_TYPE[effectiveFormat]
 
   const rawUpload = await supabase.storage
     .from('templates_raw')
-    .upload(rawPath, new Blob([new Uint8Array(fileBuf)]), {
-      contentType: CONTENT_TYPE[format],
+    .upload(rawPath, rawBlob, {
+      contentType: rawContentType,
       upsert: false,
     })
   if (rawUpload.error) throw rawUpload.error
@@ -127,31 +176,22 @@ export async function uploadTemplate(input: UploadTemplateInput) {
     })
   if (processedUpload.error) throw processedUpload.error
 
-  // 4-b. PDF テンプレ専用: 入力経路 A / B 分岐（設計書 v1.4.2 §3-6-b / 仕様書 §0-3.5 要件 1）
-  //
-  //   - パス A（未書込原本、デフォルト）: raw PDF を `_blank.pdf` にコピー →
-  //     blank_pdf_status='ready' で即利用可。
-  //   - パス B（書込済 → 白塗り化）: raw PDF のみ保存し、`_blank.pdf` は未生成。
-  //     blank_pdf_status='pending_whiteout' を立て、UI で /whiteout-preview →
-  //     /whiteout-apply を呼び出して塗り後の PDF を後段で生成する。
-  //
-  // 仕様書 §0-3.5 要件 4 著作権予防策の最低限。
-  // 今は upload 自体を同意行為とみなして agreed_at = now() を記録。
+  // 4-b. PDF / image テンプレ専用: 入力経路 A / B 分岐
+  //   - パス A（未書込原本、デフォルト）: PDF を `_blank.pdf` にコピー → blank_pdf_status='ready'
+  //   - パス B（書込済 → 白塗り化）: `_blank.pdf` は未生成、blank_pdf_status='pending_whiteout'
+  //   image 由来テンプレは常にパス B として扱う（白紙化不要、変換 PDF を直接使う）。
   let backgroundPdfPath: string | null = null
   let inputPathType: 'A' | 'B' | null = null
   let licenseConsent: { user_id: string; agreed_at: string } | null = null
-  if (format === 'pdf') {
-    inputPathType = requestedPath ?? 'A'
+  if (effectiveFormat === 'pdf') {
+    inputPathType = format === 'image' ? 'B' : (requestedPath ?? 'A')
     licenseConsent = { user_id: user.id, agreed_at: new Date().toISOString() }
 
-    // N-6 配線 (2026-05-29): PDF は汎用テキスト構造抽出でなく PDF 専用パイプラインで
-    // bbox 付き実フィールドを抽出する。これまで Phase 2.5 の classifier / extractor /
-    // field-semantic が export 済なのに uploadTemplate から呼ばれず、PDF も docx 汎用経路に
-    // 落ちて「日付/参加者/議題…」の汎用 5 項目にフォールバックしていた真因を解消する。
-    // 失敗時は汎用 schema.fields にフォールバックして upload 自体は通す（劣化はするが落とさない）。
+    // PDF 専用パイプラインで bbox 付き実フィールドを抽出する。
+    // 失敗時は汎用 schema.fields にフォールバックして upload 自体は通す。
     try {
-      const analyzeBytes = new Uint8Array(fileBuf.byteLength)
-      analyzeBytes.set(fileBuf)
+      const analyzeBytes = new Uint8Array(effectiveFileBuf.byteLength)
+      analyzeBytes.set(effectiveFileBuf)
       const analyzed = await analyzePdfFull({
         pdfBytes: analyzeBytes,
         inputPathType,
@@ -161,7 +201,7 @@ export async function uploadTemplate(input: UploadTemplateInput) {
       }
     } catch (e) {
       console.error(
-        '[N-6 upload] analyzePdfFull failed, fallback to generic schema.fields:',
+        '[upload] analyzePdfFull failed, fallback to generic schema.fields:',
         e instanceof Error ? e.message : String(e),
       )
     }
@@ -170,13 +210,23 @@ export async function uploadTemplate(input: UploadTemplateInput) {
       backgroundPdfPath = `${familyId}/${templateId}_blank.pdf`
       const blankUpload = await supabase.storage
         .from('templates_processed')
-        .upload(backgroundPdfPath, new Blob([new Uint8Array(fileBuf)]), {
+        .upload(backgroundPdfPath, new Blob([new Uint8Array(effectiveFileBuf)]), {
+          contentType: CONTENT_TYPE.pdf,
+          upsert: false,
+        })
+      if (blankUpload.error) throw blankUpload.error
+    } else if (format === 'image') {
+      // 画像由来: 変換済み PDF を blank として保存（白塗り不要）
+      backgroundPdfPath = `${familyId}/${templateId}_blank.pdf`
+      const blankUpload = await supabase.storage
+        .from('templates_processed')
+        .upload(backgroundPdfPath, new Blob([new Uint8Array(effectiveFileBuf)]), {
           contentType: CONTENT_TYPE.pdf,
           upsert: false,
         })
       if (blankUpload.error) throw blankUpload.error
     }
-    // パス B: backgroundPdfPath は null のまま。後段の /whiteout-apply で書き戻す
+    // 通常パス B: backgroundPdfPath は null のまま。後段の /whiteout-apply で書き戻す
   }
 
   // 5. DB INSERT
@@ -186,7 +236,7 @@ export async function uploadTemplate(input: UploadTemplateInput) {
       id: templateId,
       family_id: familyId,
       name,
-      source_format: format,
+      source_format: effectiveFormat,
       source_path: rawPath,
       processed_path: processedPath,
       fields: fieldsForDb,
@@ -195,13 +245,11 @@ export async function uploadTemplate(input: UploadTemplateInput) {
       background_pdf_path: backgroundPdfPath,
       input_path_type: inputPathType,
       license_consent: licenseConsent,
+      origin_format: originFormat,
     })
     .select()
     .single()
   if (error) {
-    // テンプレ累積上限（DB trigger）を専用 Error にマップしてから throw。
-    // クライアントは ResourceLimitError を catch して LimitModal を表示する想定。
-    // それ以外の DB エラーは従来通り素通し。
     const limit = mapDbErrorToResourceLimit(error)
     if (limit?.body.resource === 'templates') {
       throw new ResourceLimitError('templates')
@@ -209,23 +257,24 @@ export async function uploadTemplate(input: UploadTemplateInput) {
     throw error
   }
 
-  // 6. docx テンプレは CloudConvert で blank PDF 化
-  // pdf パス A は _blank.pdf 保存済 → 'ready'
-  // pdf パス B は _blank.pdf 未生成（UI 主導の白塗り待ち）→ 'pending_whiteout'
-  if (format === 'pdf') {
+  // 6. blank PDF ステータス更新 + サムネ生成
+  if (effectiveFormat === 'pdf') {
+    let blankStatus: string
+    if (format === 'image') {
+      // 画像由来: blank PDF 生成済
+      blankStatus = 'ready'
+    } else {
+      blankStatus = inputPathType === 'B' ? 'pending_whiteout' : 'ready'
+    }
     await supabase
       .from('templates')
-      .update({
-        blank_pdf_status: inputPathType === 'B' ? 'pending_whiteout' : 'ready',
-      })
+      .update({ blank_pdf_status: blankStatus })
       .eq('id', templateId)
 
-    // パス A は blank PDF が確定済なので即サムネ生成。
-    // パス B は白塗り適用（/whiteout-apply）後に生成するため upload 時はスキップ。
-    // 失敗してもサムネ status='failed' を記録するのみで upload は落とさない。
-    if (inputPathType === 'A') {
-      const thumbBytes = new Uint8Array(fileBuf.byteLength)
-      thumbBytes.set(fileBuf)
+    // パス A または画像由来は blank PDF が確定済なので即サムネ生成。
+    if (inputPathType === 'A' || format === 'image') {
+      const thumbBytes = new Uint8Array(effectiveFileBuf.byteLength)
+      thumbBytes.set(effectiveFileBuf)
       await generateTemplateThumbnail(supabase, {
         familyId,
         templateId,
@@ -235,7 +284,7 @@ export async function uploadTemplate(input: UploadTemplateInput) {
   } else {
     // docx 経路: CloudConvert API 呼出（失敗時は擬人化エラーで client に伝播）
     try {
-      const blankPdfBuffer = await convertDocxToBlankPdf(fileBuf, `${name}.docx`)
+      const blankPdfBuffer = await convertDocxToBlankPdf(effectiveFileBuf, `${name}.docx`)
       const blankPdfPath = `${familyId}/${templateId}_blank.pdf`
       const blankUpload = await supabase.storage
         .from('templates_processed')
@@ -380,7 +429,6 @@ export async function listTemplates() {
 /**
  * テンプレ一覧 + 各テンプレの thumbnail signed URL を付与。
  * thumbnail_status='ready' かつ thumbnail_path が存在する場合のみ signed URL を生成。
- * Phase 5a §1-3 テンプレカード UI 用。
  */
 export async function listTemplatesWithThumbs() {
   const supabase = await createSupabaseServerClient()
@@ -415,15 +463,15 @@ export async function getTemplate(templateId: string) {
 }
 
 /**
- * bbox エディタの保存（G2-1 §4-2/§4-3/§4-4 ＋ グループB Phase B-1 §1-2）。
+ * bbox エディタの保存。
  *
- * グループB で「全 field スナップショット送信＋差分判定（UPDATE/DELETE/INSERT）」へ拡張。
- * 後方互換: 現行クライアントが {name,bbox}[] を送る間は全件 UPDATE になり従来同等に通る
- * （label/isNew は任意）。追加/分割/削除は後続フェーズの UI が isNew/labelDirty を付けて送る。
+ * 「全 field スナップショット送信＋差分判定（UPDATE/DELETE/INSERT）」方式。
+ * 後方互換: クライアントが {name,bbox}[] のみ送る場合は全件 UPDATE になり従来同等に通る
+ * （label/isNew は任意）。
  *
  * - UPDATE: bbox のみ差替（label/type/font/padding 等は現 DB 値を温存。labelDirty 時のみ label 差替）。
  * - DELETE: スナップショットに無い既存 field を除外。
- * - INSERT: isNew の新 field を §2-4 デフォルト補完で生成・name 衝突はサーバ再採番。
+ * - INSERT: isNew の新 field をデフォルト補完で生成・name 衝突はサーバ再採番。
  * - bbox がページ範囲内・w/h>0（範囲は background PDF の pageSizes で判定）。
  * - 反映後件数 min1/max20（FIELD_COUNT_OUT_OF_RANGE）・label 1-40（INVALID_LABEL）。
  * - 楽観ロック: 保存直前に現 DB fields を再取得しハッシュ再計算、
@@ -444,7 +492,7 @@ export async function updateTemplateFieldsBbox(
   } = await supabase.auth.getUser()
   if (!user) throw new Error('UNAUTHENTICATED')
 
-  // 入力バリデーション（name + bbox ＋任意の label/isNew/labelDirty。§1-2）。
+  // 入力バリデーション（name + bbox ＋任意の label/isNew/labelDirty）。
   const snapshot = FieldsSnapshotPayloadSchema.parse(updatedFields)
 
   // 現 DB テンプレ取得（RLS で自家族 + builtin のみ可視）。
@@ -466,14 +514,13 @@ export async function updateTemplateFieldsBbox(
     ? (template.fields as unknown[])
     : []
 
-  // 楽観ロック: 保存直前の現 DB fields ハッシュとクライアント送付版を比較（§4-3）。
+  // 楽観ロック: 保存直前の現 DB fields ハッシュとクライアント送付版を比較。
   //
-  // ⚠ TOCTOU 既知（差し戻し-2）: この check（select→ハッシュ）と後段の .update() は
+  // ⚠ TOCTOU 既知: この check（select→ハッシュ）と後段の .update() は
   // 別クエリのため、ハッシュ再取得〜UPDATE 間に並行更新が割り込む理論窓がある。
   // 家族内・単一テンプレ・低頻度編集の前提では実害は極小（同一テンプレを別々の人が
   // ミリ秒差で保存するケースは現実にはほぼ起きない）。
-  // 将来 atomic 化するなら、条件付き UPDATE（fields ハッシュを WHERE 条件に持つ RPC、
-  // 例: PostgREST 経由の RPC で row lock しつつ比較→更新）へ移行する候補。
+  // 将来 atomic 化するなら、条件付き UPDATE（fields ハッシュを WHERE 条件に持つ RPC）へ移行。
   const currentVersion = computeFieldsVersion(dbFields)
   if (currentVersion !== fieldsVersion) {
     throw new Error('CONFLICT')
@@ -519,7 +566,7 @@ export async function updateTemplateFieldsBbox(
  * templates.fixed_texts（jsonb）を独立に更新する専用 Server Action。
  *   - 入力検証（zod FixedTextSchema 配列）＋ buildFixedTexts（空 value 除外・bbox 範囲・件数20）。
  *   - 🚨 fields / whiteout_boxes には一切触れない（カラム独立保存）。
- *   - 🚨 computeFieldsVersion の楽観ロックは発火させない（fixed_texts は fields に乗らない・§3-1）。
+ *   - 🚨 computeFieldsVersion の楽観ロックは発火させない（fixed_texts は fields に乗らない）。
  *   - RLS で自家族・非 default のみ更新可（default は明示拒否）。
  *
  * 戻り値は擬人化エラーのため throw する Error の message を権限/範囲/件数で分岐。
@@ -579,4 +626,121 @@ export async function updateTemplateFixedTexts(
   if (updErr) throw new Error('SAVE_FAILED')
 
   return { ok: true as const, count: built.fixedTexts.length }
+}
+
+/**
+ * Guest-only template preview: parse + extract fields + rasterize thumbnail.
+ * No DB INSERT or Storage upload is performed — returns fields and thumbnail as a base64 data URL.
+ * Authenticated users should use uploadTemplate instead.
+ *
+ * Gate order: burst → Turnstile → guestTemplateLimit.
+ * (burst check here because Server Actions bypass middleware)
+ */
+export async function previewTemplateAsGuest(input: {
+  format: 'docx' | 'pdf' | 'image'
+  fileBase64: string
+  imageMime?: 'image/jpeg' | 'image/png' | 'image/webp'
+  turnstileToken?: string
+}): Promise<{ fields: { name: string; label: string }[]; thumbnailDataUrl: string | null }> {
+  // Authenticated users must use the normal upload flow.
+  const supabase = await createSupabaseServerClient()
+  const {
+    data: { user },
+  } = await supabase.auth.getUser()
+  if (user) throw new Error('USE_UPLOAD_TEMPLATE')
+
+  const h = await headers()
+  const ip = getClientIpFromHeaders(h)
+
+  // GR3: lightweight burst check (Server Actions bypass middleware).
+  const burst = await ipBurstLimit.limit(`ip:${ip}`)
+  if (!burst.success) throw new Error('TOO_MANY_REQUESTS')
+
+  // Turnstile verification (skipped when TURNSTILE_SECRET_KEY is not set).
+  const turnstile = await verifyTurnstile(input.turnstileToken ?? '', ip)
+  if (!turnstile.ok) throw new Error('TURNSTILE_FAILED')
+
+  // Per-IP cumulative limit for template previews (default: 2 per 90 days).
+  const limit = await guestTemplateLimit.limit(`ip:${ip}`)
+  if (!limit.success) throw new Error('TEMPLATE_LIMIT_GUEST')
+
+  // File size check.
+  const fileBuf = Buffer.from(input.fileBase64, 'base64')
+  if (fileBuf.byteLength === 0) throw new Error('EMPTY_FILE')
+  if (fileBuf.byteLength > MAX_FILE_BYTES) throw new Error('FILE_TOO_LARGE')
+
+  const { format, imageMime } = input
+
+  let pdfBuf: Buffer | null = null
+
+  if (format === 'image') {
+    if (!imageMime) throw new Error('IMAGE_MIME_REQUIRED')
+    const imageBytes = new Uint8Array(fileBuf.byteLength)
+    imageBytes.set(fileBuf)
+    const converted = await imageToA4Pdf(imageBytes, imageMime)
+    pdfBuf = Buffer.from(converted)
+  } else if (format === 'pdf') {
+    pdfBuf = fileBuf
+  }
+
+  const effectiveFormat = format === 'image' ? 'pdf' : format
+  const parser = getParser(effectiveFormat)
+  const parseBuf = pdfBuf ?? fileBuf
+  const intermediate = await parser.parse(
+    parseBuf.buffer.slice(parseBuf.byteOffset, parseBuf.byteOffset + parseBuf.byteLength) as ArrayBuffer,
+  )
+
+  let fields: { name: string; label: string }[]
+
+  if (effectiveFormat === 'pdf' && pdfBuf) {
+    // PDF/image path: use analyzePdfFull for bbox-aware field extraction; fall back to generic.
+    try {
+      const analyzeBytes = new Uint8Array(pdfBuf.byteLength)
+      analyzeBytes.set(pdfBuf)
+      const analyzed = await analyzePdfFull({ pdfBytes: analyzeBytes, inputPathType: 'A' })
+      if (analyzed.fields.length > 0) {
+        fields = analyzed.fields.map((f) => ({
+          name: f.name,
+          label: f.label ?? f.name,
+        }))
+      } else {
+        const schema = await extractTemplateStructure(intermediate)
+        fields = schema.fields.map((f) => ({ name: f.name, label: f.label ?? f.name }))
+      }
+    } catch {
+      const schema = await extractTemplateStructure(intermediate)
+      fields = schema.fields.map((f) => ({ name: f.name, label: f.label ?? f.name }))
+    }
+  } else {
+    // docx path: generic structure extraction only (no CloudConvert, no thumbnail).
+    const schema = await extractTemplateStructure(intermediate)
+    fields = schema.fields.map((f) => ({ name: f.name, label: f.label ?? f.name }))
+  }
+
+  // Thumbnail generation: PDF/image only, in-memory, returned as base64 data URL.
+  // docx returns null (CloudConvert is not called for guests).
+  let thumbnailDataUrl: string | null = null
+  if (effectiveFormat === 'pdf' && pdfBuf) {
+    try {
+      const pdfBytes = new Uint8Array(pdfBuf.byteLength)
+      pdfBytes.set(pdfBuf)
+      const totalPages = await getPdfNumPages(pdfBytes)
+      const result = await renderPdfToImages({
+        pdfBytes,
+        totalPages,
+        pageRange: { from: 1, to: 1 },
+        requestedDpi: 72,
+        format: 'png',
+        asZip: false,
+        forceDpi: true,
+      })
+      const b64 = Buffer.from(result.bytes).toString('base64')
+      thumbnailDataUrl = `data:${result.contentType};base64,${b64}`
+    } catch {
+      // Thumbnail failure is non-fatal; fields preview is still returned.
+      thumbnailDataUrl = null
+    }
+  }
+
+  return { fields, thumbnailDataUrl }
 }

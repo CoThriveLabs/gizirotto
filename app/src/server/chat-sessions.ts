@@ -11,13 +11,13 @@ import {
 } from '@/lib/ai/prompts/chat-to-fields'
 
 /**
- * AI チャット (A-1 / A-2) のセッション管理 Server Action（Phase 5b §1-3 / §27-6）。
+ * AI チャット (A-1 / A-2) のセッション管理 Server Action。
  *
  * - createChatSession: chat_sessions INSERT、id を client に返す
  * - persistChatTurn: stream 完了時に user + assistant メッセージを batch INSERT
  * - completeChatSession: chat_sessions.completed_at を更新（議事録保存後）
  *
- * stream 中の partial write は性能影響あるため完了時 batch、§27-2 末尾整合。
+ * stream 中の partial write は性能影響あるため完了時 batch に書き込む。
  */
 
 const modeSchema = z.enum(['A-1', 'A-2'])
@@ -138,9 +138,8 @@ const fieldDefSchema = z.object({
 
 const messageRoleSchema = z.object({
   role: z.enum(['user', 'assistant']),
-  // B-6 真因 (2026-05-28): stream 中に setMessages で空 content のプレースホルダ assistant 行が
-  // 入る瞬間があり、onFinalize がそれを掴むと .min(1) 違反で 500。stream 由来の内部データなので
-  // 空文字を許容する (untrusted user input ではない)。
+  // stream 中に setMessages で空 content のプレースホルダ assistant 行が入る瞬間があり、
+  // onFinalize がそれを掴むと .min(1) 違反になる。stream 由来の内部データなので空文字を許容する。
   content: z.string().max(20000),
 })
 
@@ -160,7 +159,7 @@ export async function extractFieldsFromChat(input: {
   conversation: Array<{ role: 'user' | 'assistant'; content: string }>
 }): Promise<{ values: Record<string, string> }> {
   const parsed = extractFieldsSchema.parse(input)
-  // B-6 応急処置 (2026-05-28): 空 fields で来た場合は AI 呼ばず空 values を返す (cost 0)
+  // 空 fields で来た場合は AI を呼ばず空 values を返す（cost 0・zod .min(1) 早期 return）。
   if (parsed.fields.length === 0) return { values: {} }
   const supabase = await createSupabaseServerClient()
 

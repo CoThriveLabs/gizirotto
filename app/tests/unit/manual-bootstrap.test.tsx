@@ -23,6 +23,7 @@ vi.mock('next/navigation', () => ({
     refresh: vi.fn(),
     back: vi.fn(),
   }),
+  usePathname: () => '/minutes/new/manual',
 }))
 
 vi.mock('@/server/minutes', () => ({

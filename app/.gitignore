@@ -44,9 +44,8 @@ supabase/.branches/
 
 # 知人サンプル PDF（仕様書 v1.6.1 §0-3.5 要件 6 / 依頼書 §3-7）
 # Phase 2.5 フィクスチャ用途のみ。AI 学習・git コミット・PF 公開のいずれも不可
-# Public PF: sample/ 全除外（.gitkeep 例外復活なし）
-sample/
 sample/*.pdf
+!sample/.gitkeep
 
 # Mistral OCR 検証スナップショット（知人 PDF 由来内容を含むため git 管理外）
 scripts/mistral-ocr-response-snapshot.json

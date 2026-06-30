@@ -1,8 +1,7 @@
 import Link from 'next/link'
-import { headers } from 'next/headers'
-import { redirect } from 'next/navigation'
+import { notFound, redirect } from 'next/navigation'
 import { getTemplate } from '@/server/templates'
-import { FamilyUsageBadge } from '@/components/usage/family-usage-badge'
+import { isBuiltinTemplate } from '@/lib/templates/builtin-ids'
 
 export const dynamic = 'force-dynamic'
 
@@ -12,10 +11,12 @@ interface SearchParams {
 }
 
 /**
- * 議事録新規作成入口（§26-2 mode 分岐）。
+ * 議事録新規作成入口（モード分岐）。
  *  - template_id 必須（テンプレ選択画面から遷移してくる）
+ *  - builtin テンプレ ID のみ通過（user テンプレへの直 URL は 404）
  *  - intent=manual → B-2 直行 (/minutes/new/manual)
  *  - intent=ai (default) → モード選択（A-1 / A-2 / B-2 ボタン提示）
+ *  - 未ログインでも表示可（DB 書き込み操作は各モード画面で分岐）
  */
 export default async function MinutesNewPage({
   searchParams,
@@ -23,12 +24,14 @@ export default async function MinutesNewPage({
   searchParams: Promise<SearchParams>
 }) {
   const params = await searchParams
-  const hdrs = await headers()
-  const familyId = hdrs.get('x-family-id')
-  if (!familyId) redirect('/family/setup')
 
   const templateId = params.template_id
   if (!templateId) redirect('/templates?from=cta&intent=ai')
+
+  // builtin 以外の ID は 404。未ログイン時の user テンプレ偽装を弾く。
+  if (!isBuiltinTemplate(templateId)) {
+    notFound()
+  }
 
   const template = await getTemplate(templateId)
   const intent = params.intent === 'manual' ? 'manual' : 'ai'
@@ -39,17 +42,13 @@ export default async function MinutesNewPage({
 
   return (
     <div className="max-w-2xl mx-auto px-4 py-6 space-y-6">
-      <header className="flex items-start justify-between gap-3">
-        <div>
-          <h1 className="text-xl font-serif text-gizirotto-blue-900">
-            作り方を選ぶ
-          </h1>
-          <p className="text-xs text-gray-500 mt-1">
-            テンプレ: {template.name}
-          </p>
-        </div>
-        {/* 残数バッジ */}
-        <FamilyUsageBadge />
+      <header>
+        <h1 className="text-xl font-serif text-gizirotto-blue-900">
+          作り方を選ぶ
+        </h1>
+        <p className="text-xs text-gray-500 mt-1">
+          テンプレ: {template.name}
+        </p>
       </header>
 
       <ul className="space-y-3">

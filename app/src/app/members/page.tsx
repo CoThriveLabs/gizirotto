@@ -7,6 +7,7 @@ import { MemberAvatar } from '@/components/MemberAvatar'
 import { CopyInviteCodeButton } from './_components/CopyInviteCodeButton'
 import { RegenerateInviteCodeButton } from './_components/RegenerateInviteCodeButton'
 import { UsageSection } from './_components/UsageSection'
+import { PromoteToAdminButton } from './_components/PromoteToAdminButton'
 
 export const metadata = {
   title: '家族メンバー',
@@ -116,6 +117,14 @@ export default async function MembersPage() {
                   <span className="text-xs bg-gray-100 text-gray-700 px-2 py-0.5 rounded">
                     {m.role === 'admin' ? '管理者' : 'メンバー'}
                   </span>
+                  {isAdmin && (
+                    <PromoteToAdminButton
+                      memberId={m.user_id}
+                      displayName={m.display_name}
+                      currentRole={m.role}
+                      myRole={me?.role ?? 'member'}
+                    />
+                  )}
                 </li>
               ))}
             </ul>
