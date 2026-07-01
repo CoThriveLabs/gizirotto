@@ -60,7 +60,7 @@ vi.mock('@/lib/supabase/server', () => ({
 vi.mock('@/lib/ratelimit', () => ({
   ipBurstLimit: { limit: (...args: unknown[]) => burstLimitMock(...args) },
   guestTemplateLimit: { limit: (...args: unknown[]) => guestTemplateLimitMock(...args) },
-  guestAiLimit: { limit: vi.fn().mockResolvedValue({ success: true, remaining: 2, reset: 0 }) },
+  guestAiDailyLimit: { limit: vi.fn().mockResolvedValue({ success: true, remaining: 2, reset: 0 }) },
 }))
 
 // ---- Turnstile mock ----

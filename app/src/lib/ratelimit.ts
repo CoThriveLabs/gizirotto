@@ -66,18 +66,20 @@ export const ipBurstLimit: RateLimiter = hasUpstashEnv()
   ? buildUpstashLimiter()
   : noop
 
-const GUEST_AI_LIMIT_COUNT = Number(process.env.GUEST_AI_LIMIT_COUNT ?? '2')
-// Cast is safe: env value must follow Upstash Duration syntax (e.g. "90 d", "1 h").
-const GUEST_AI_LIMIT_WINDOW = (process.env.GUEST_AI_LIMIT_WINDOW ?? '90 d') as Duration
+// AI 呼び出し暴発防御専用（DoS 対策）。「議事録 2 件制限」は guestTemplateLimit で別途担保。
+// 想定: 議事録 1 件で約 10 request（初回 kick + 会話 + extract-fields + format-item）× 2 件 = 20 request/日。
+const GUEST_AI_DAILY_LIMIT_COUNT = Number(process.env.GUEST_AI_DAILY_LIMIT_COUNT ?? '20')
+// Cast is safe: env value must follow Upstash Duration syntax (e.g. "1 d", "1 h").
+const GUEST_AI_DAILY_LIMIT_WINDOW = (process.env.GUEST_AI_DAILY_LIMIT_WINDOW ?? '1 d') as Duration
 
-function buildGuestAiLimiter(): RateLimiter {
+function buildGuestAiDailyLimiter(): RateLimiter {
   const redis = Redis.fromEnv()
   const rl = new Ratelimit({
     redis,
-    // Sliding window preserves count over the full window even if requests trickle in.
-    limiter: Ratelimit.slidingWindow(GUEST_AI_LIMIT_COUNT, GUEST_AI_LIMIT_WINDOW),
+    // Sliding window で 1 日ウィンドウを共有し、DoS 攻撃時の総 request 数を上限に抑える。
+    limiter: Ratelimit.slidingWindow(GUEST_AI_DAILY_LIMIT_COUNT, GUEST_AI_DAILY_LIMIT_WINDOW),
     analytics: false,
-    prefix: 'minutes:guest-ai',
+    prefix: 'minutes:guest-ai-daily',
   })
   return {
     async limit(key: string) {
@@ -88,17 +90,17 @@ function buildGuestAiLimiter(): RateLimiter {
 }
 
 /**
- * Per-IP cumulative gate for unauthenticated AI requests.
- * Default: 2 calls per 90 days (configurable via GUEST_AI_LIMIT_COUNT / GUEST_AI_LIMIT_WINDOW).
- * When Upstash env vars are absent (local / CI) this resolves to a noop that always succeeds.
+ * 悪意 IP からの Anthropic API 呼び出し暴発防御。既定 20 req/1d/IP。
+ * 「議事録 2 件制限」ではなく DoS 防御。通常ユーザーは 20 req/日で議事録 2 件を作り切れる想定。
+ * Upstash 未設定環境（ローカル / CI）では noop。
  */
-export const guestAiLimit: RateLimiter = hasUpstashEnv()
-  ? buildGuestAiLimiter()
+export const guestAiDailyLimit: RateLimiter = hasUpstashEnv()
+  ? buildGuestAiDailyLimiter()
   : noop
 
 const GUEST_TEMPLATE_LIMIT_COUNT = Number(process.env.GUEST_TEMPLATE_LIMIT_COUNT ?? '2')
-// Cast is safe: env value must follow Upstash Duration syntax (e.g. "90 d", "1 h").
-const GUEST_TEMPLATE_LIMIT_WINDOW = (process.env.GUEST_TEMPLATE_LIMIT_WINDOW ?? '90 d') as Duration
+// Cast is safe: env value must follow Upstash Duration syntax (e.g. "1 d", "1 h").
+const GUEST_TEMPLATE_LIMIT_WINDOW = (process.env.GUEST_TEMPLATE_LIMIT_WINDOW ?? '1 d') as Duration
 
 function buildGuestTemplateLimiter(): RateLimiter {
   const redis = Redis.fromEnv()
@@ -117,10 +119,11 @@ function buildGuestTemplateLimiter(): RateLimiter {
 }
 
 /**
- * Per-IP cumulative gate for unauthenticated template-preview requests.
- * Default: 2 calls per 90 days (configurable via GUEST_TEMPLATE_LIMIT_COUNT / GUEST_TEMPLATE_LIMIT_WINDOW).
- * Key space is separate from guestAiLimit (prefix "minutes:guest-template").
- * When Upstash env vars are absent (local / CI) this resolves to a noop that always succeeds.
+ * 「議事録 2 件制限」の唯一の担保。ゲストは 1 日 2 回まで AdjustView に到達できる。
+ * `(public-flow)/minutes/new/adjust/page.tsx` で AdjustView 到達時に 1 回消費される。
+ * 既定 2 回/1d/IP（GUEST_TEMPLATE_LIMIT_COUNT / GUEST_TEMPLATE_LIMIT_WINDOW で調整可）。
+ * Key space は guestAiDailyLimit と独立（prefix "minutes:guest-template"）。
+ * Upstash 未設定環境（ローカル / CI）では noop。
  */
 export const guestTemplateLimit: RateLimiter = hasUpstashEnv()
   ? buildGuestTemplateLimiter()

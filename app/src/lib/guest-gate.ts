@@ -1,13 +1,17 @@
 import 'server-only'
 
-import { guestAiLimit } from '@/lib/ratelimit'
+import { guestAiDailyLimit } from '@/lib/ratelimit'
 import { verifyTurnstile } from '@/lib/turnstile'
 
 /**
- * Shared guest gate for AI endpoints (chat/stream and format-item).
- * Runs in order: Turnstile verification → guestAiLimit consumption.
+ * Shared guest gate for AI endpoints (chat/stream, format-item, extract-fields).
+ * Runs in order: Turnstile verification → guestAiDailyLimit consumption.
  * The burst check is handled by middleware before the route is reached,
  * so it is not repeated here.
+ *
+ * guestAiDailyLimit は「議事録 2 件制限」ではなく AI 呼び出し暴発防御専用（DoS 対策）。
+ * 到達しても**ログイン誘導ではなく 429 Too Many Requests を返す**（時間経過で自動復帰）。
+ * 「議事録 2 件制限」は guestTemplateLimit（AdjustView 到達時消費）で別途担保する。
  *
  * Returns { ok: true } when the guest passes all checks.
  * Returns { ok: false, response } with a ready-to-return Response on failure.
@@ -30,15 +34,22 @@ export async function guestAiGate(args: {
     }
   }
 
-  // Consume one guest AI quota slot for this IP.
-  const { success } = await guestAiLimit.limit(`ip:${args.ip}`)
+  // Consume one guest AI daily quota slot for this IP.
+  const { success, reset } = await guestAiDailyLimit.limit(`ip:${args.ip}`)
   if (!success) {
-    const next = encodeURIComponent(args.referer ?? '/')
+    // Retry-After は seconds 単位で最小 1（ratelimit の reset が過去に見える場合の防御）。
+    const retryAfterSec = Math.max(1, Math.ceil((reset - Date.now()) / 1000))
     return {
       ok: false,
       response: new Response(
-        JSON.stringify({ error: 'AI_LIMIT_GUEST', loginUrl: `/login?next=${next}` }),
-        { status: 401, headers: { 'content-type': 'application/json' } },
+        JSON.stringify({ error: 'GUEST_AI_DAILY_LIMIT' }),
+        {
+          status: 429,
+          headers: {
+            'content-type': 'application/json',
+            'Retry-After': String(retryAfterSec),
+          },
+        },
       ),
     }
   }

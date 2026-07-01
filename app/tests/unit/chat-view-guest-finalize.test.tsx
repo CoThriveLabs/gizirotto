@@ -94,19 +94,32 @@ function makeSseStream(events: string[] = ['data: {"type":"done"}\n\n']): Readab
  * fetch mock: URL で /api/minutes/chat/extract-fields と chat/stream を判別する。
  * extractFieldsResult 省略時は ok:false（guestAiGate 失敗相当）＝ 既存 memo dump
  * フォールバックへ落ちる既定挙動（GA4 導入前と同じテスト前提を維持）。
+ * chatStreamStatus / chatStreamBody で /api/minutes/chat/stream 応答も差し替え可能
+ * （GA6 の GUEST_AI_DAILY_LIMIT テスト用）。
  */
 function makeFetchMock(
   extractFieldsResult: { ok: boolean; status?: number; values?: Record<string, string> } = {
     ok: false,
-    status: 401,
+    status: 429,
   },
+  chatStream: { status?: number; body?: Record<string, unknown> } = {},
 ) {
   return vi.fn().mockImplementation((url: unknown) => {
     if (typeof url === 'string' && url.includes('/api/minutes/chat/extract-fields')) {
       return Promise.resolve({
         ok: extractFieldsResult.ok,
-        status: extractFieldsResult.status ?? (extractFieldsResult.ok ? 200 : 401),
+        status: extractFieldsResult.status ?? (extractFieldsResult.ok ? 200 : 429),
         json: vi.fn().mockResolvedValue({ values: extractFieldsResult.values ?? {} }),
+      })
+    }
+    // chat/stream 応答をテスト側で差し替え可能に。既定は 200 + SSE ストリーム。
+    if (chatStream.status !== undefined && chatStream.status !== 200) {
+      return Promise.resolve({
+        ok: chatStream.status < 400,
+        status: chatStream.status,
+        body: null,
+        json: vi.fn().mockResolvedValue(chatStream.body ?? {}),
+        headers: new Headers(),
       })
     }
     return Promise.resolve({
@@ -358,6 +371,55 @@ describe('ChatView — GA5 Turnstile ゲート', () => {
     await waitFor(() => {
       expect(turnstileControls.resetMock).toHaveBeenCalled()
     })
+  })
+})
+
+describe('ChatView — GA6 guest AI daily limit (429)', () => {
+  it('chat/stream が 429 GUEST_AI_DAILY_LIMIT を返すとログイン誘導せず errorMsg を表示', async () => {
+    const fetchMock = makeFetchMock({ ok: false, status: 429 }, {
+      status: 429,
+      body: { error: 'GUEST_AI_DAILY_LIMIT' },
+    })
+    global.fetch = fetchMock
+
+    await act(async () => {
+      render(<ChatView {...DEFAULT_PROPS} isGuest />)
+    })
+    // 初回 kick-off で fetch 発火 → 429 → errorMsg 表示
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalled()
+    })
+    await waitFor(() => {
+      expect(
+        screen.getByText('AI 呼び出しが集中しています。しばらく待ってから再度お試しください。'),
+      ).toBeTruthy()
+    })
+    // ログイン誘導（router.push）は呼ばれない（時間経過で自動復帰する意味論）。
+    expect(pushMock).not.toHaveBeenCalled()
+    // form-cache 保存は行わない（GA6 で撤去）。
+    expect(sessionStorage.getItem(`form-cache:v1:minutes:new:chat:${DEFAULT_PROPS.templateId}`)).toBeNull()
+  })
+
+  it('汎用エラーメッセージが GUEST_AI_DAILY_LIMIT メッセージを上書きしない', async () => {
+    const fetchMock = makeFetchMock({ ok: false, status: 429 }, {
+      status: 429,
+      body: { error: 'GUEST_AI_DAILY_LIMIT' },
+    })
+    global.fetch = fetchMock
+
+    await act(async () => {
+      render(<ChatView {...DEFAULT_PROPS} isGuest />)
+    })
+
+    await waitFor(() => {
+      expect(
+        screen.getByText('AI 呼び出しが集中しています。しばらく待ってから再度お試しください。'),
+      ).toBeTruthy()
+    })
+    // 「返答の取得に失敗しました」の汎用メッセージは出ないこと（catch 節で上書き除外）。
+    expect(
+      screen.queryByText('返答の取得に失敗しました。少し時間を置いて再度お試しください。'),
+    ).toBeNull()
   })
 })
 

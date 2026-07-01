@@ -1,6 +1,6 @@
 /**
  * Tests for guestTemplateLimit in ratelimit.ts.
- * Verifies prefix isolation from guestAiLimit and noop behaviour in non-production.
+ * Verifies prefix isolation from guestAiDailyLimit and noop behaviour in non-production.
  */
 import { describe, it, expect, vi, afterEach } from 'vitest'
 
@@ -61,7 +61,7 @@ describe('guestTemplateLimit', () => {
     expect(typeof result.remaining).toBe('number')
   })
 
-  it('uses a different prefix than guestAiLimit (key space isolation)', async () => {
+  it('uses a different prefix than guestAiDailyLimit (key space isolation)', async () => {
     setUpstashEnv()
     vi.stubEnv('VERCEL_ENV', '')
 
@@ -69,10 +69,10 @@ describe('guestTemplateLimit', () => {
 
     // Both limiters must be registered with distinct key-space prefixes.
     expect(capturedPrefixes).toContain('minutes:guest-template')
-    expect(capturedPrefixes).toContain('minutes:guest-ai')
+    expect(capturedPrefixes).toContain('minutes:guest-ai-daily')
     // The two prefixes must be different strings (not deduplicated).
     expect(capturedPrefixes.indexOf('minutes:guest-template')).not.toBe(
-      capturedPrefixes.indexOf('minutes:guest-ai'),
+      capturedPrefixes.indexOf('minutes:guest-ai-daily'),
     )
   })
 

@@ -1,6 +1,6 @@
 'use client'
 
-import { usePathname, useRouter } from 'next/navigation'
+import { useRouter } from 'next/navigation'
 import { useEffect, useRef, useState } from 'react'
 import {
   createChatSession,
@@ -46,7 +46,6 @@ const GUEST_SNAPSHOT_TTL_MS = 30 * 60 * 1000
 
 export function ChatView({ templateId, templateName, mode, fields, isGuest }: Props) {
   const router = useRouter()
-  const pathname = usePathname()
   const [sessionId, setSessionId] = useState<string | null>(null)
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [input, setInput] = useState('')
@@ -68,9 +67,11 @@ export function ChatView({ templateId, templateName, mode, fields, isGuest }: Pr
   const initRan = useRef(false)
   const scrollRef = useRef<HTMLDivElement | null>(null)
 
-  // form-cache: snapshot は未ログインでログイン後の復帰を想定して 30 分 TTL
+  // form-cache: 議事録化成功時に snapshot をクリア（saveSnapshot 経路は GA6 で撤去済み・
+  // 401 AI_LIMIT_GUEST ハンドリング撤去に伴う）。クリア用途のみで残す。onRestore は
+  // 別セッションから戻ってきた時の会話復元用に温存（将来の form-cache 拡張時に活用）。
   const formId = `minutes:new:chat:${templateId}`
-  const { saveSnapshot, clearSnapshot } = useFormCache<ChatSnapshot>(formId, {
+  const { clearSnapshot } = useFormCache<ChatSnapshot>(formId, {
     ttlMs: GUEST_SNAPSHOT_TTL_MS,
     onRestore: (v) => {
       setMessages(v.messages)
@@ -145,13 +146,22 @@ export function ChatView({ templateId, templateName, mode, fields, isGuest }: Pr
           ...(capturedToken !== undefined ? { turnstileToken: capturedToken } : {}),
         }),
       })
-      // 429 AI_LIMIT_EXCEEDED は modal で出し分け
+      // 429 の 2 分岐: (a) ゲスト AI 濫用防御（GUEST_AI_DAILY_LIMIT・時間経過で自動復帰）、
+      // (b) ログインユーザーの月次上限（AI_LIMIT_EXCEEDED・LimitModal で出し分け）。
+      // ゲスト経路ではログイン誘導ではなく通常のエラーメッセージにして、時間を置けば復帰できる
+      // ことを伝える（「議事録 2 件制限」は guestTemplateLimit で別途担保しているため、AI 濫用
+      // 防御到達時にログインを強制しない）。
       if (res.status === 429) {
         try {
           const body = (await res.json()) as {
+            error?: string
             code?: string
             scope?: LimitScope
             reset_at?: string
+          }
+          if (body.error === 'GUEST_AI_DAILY_LIMIT') {
+            setErrorMsg('AI 呼び出しが集中しています。しばらく待ってから再度お試しください。')
+            throw new Error('GUEST_AI_DAILY_LIMIT')
           }
           if (body.code === 'AI_LIMIT_EXCEEDED' && body.scope) {
             setLimitModal({
@@ -165,21 +175,6 @@ export function ChatView({ templateId, templateName, mode, fields, isGuest }: Pr
           // JSON 解析失敗時は通常エラーフローに倒す
         }
         throw new Error('AI_LIMIT_EXCEEDED')
-      }
-      // 401 AI_LIMIT_GUEST: guest trial exhausted → save snapshot → redirect to login
-      if (res.status === 401) {
-        try {
-          const body = (await res.json()) as { error?: string; loginUrl?: string }
-          if (body.error === 'AI_LIMIT_GUEST') {
-            // Persist conversation so it can be restored after login
-            saveSnapshot({ messages, input })
-            const next = body.loginUrl ?? `/login?next=${encodeURIComponent(pathname ?? '/')}`
-            router.push(next)
-            return
-          }
-        } catch {
-          // fallthrough to generic error
-        }
       }
       if (!res.ok || !res.body) throw new Error('STREAM_FAILED')
 
@@ -241,8 +236,15 @@ export function ChatView({ templateId, templateName, mode, fields, isGuest }: Pr
       // 発火されず、2 回目以降の consumeToken() が永久待機になる。enabled=false / widget
       // 未 mount 時は no-op なのでログインユーザー経路は完全不変。
       if (isGuest) turnstileGate.reset()
-    } catch {
-      setErrorMsg('返答の取得に失敗しました。少し時間を置いて再度お試しください。')
+    } catch (e) {
+      // GUEST_AI_DAILY_LIMIT / AI_LIMIT_EXCEEDED は 429 分岐内で既に setErrorMsg / setLimitModal
+      // 済み。汎用エラーメッセージで上書きしない。それ以外は「返答の取得に失敗」を表示。
+      const isKnownLimit =
+        e instanceof Error &&
+        (e.message === 'GUEST_AI_DAILY_LIMIT' || e.message === 'AI_LIMIT_EXCEEDED')
+      if (!isKnownLimit) {
+        setErrorMsg('返答の取得に失敗しました。少し時間を置いて再度お試しください。')
+      }
       // Turnstile トークンは使い切ったので次回チャレンジを明示発火。
       // enabled=false / widget 未 mount 時は no-op。
       turnstileGate.reset()

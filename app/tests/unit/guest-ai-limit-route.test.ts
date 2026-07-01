@@ -38,10 +38,10 @@ vi.mock('@/lib/supabase/service', () => ({
   }),
 }))
 
-// ratelimit mock — guestAiLimit only; ipBurstLimit stays noop
+// ratelimit mock — guestAiDailyLimit only; ipBurstLimit stays noop
 vi.mock('@/lib/ratelimit', () => ({
   ipBurstLimit: { limit: async () => ({ success: true, reset: 0, remaining: 10 }) },
-  guestAiLimit: { limit: (...args: unknown[]) => guestLimitMock(...args) },
+  guestAiDailyLimit: { limit: (...args: unknown[]) => guestLimitMock(...args) },
 }))
 
 // ai-usage-guard mock (not called for guests)
@@ -150,7 +150,7 @@ describe('/api/minutes/format-item — Turnstile gate (S2-1)', () => {
     getUserMock.mockResolvedValue({ data: { user: null } })
   })
 
-  it('Turnstile 検証失敗 → 403 TURNSTILE_FAILED、guestAiLimit は呼ばれない', async () => {
+  it('Turnstile 検証失敗 → 403 TURNSTILE_FAILED、guestAiDailyLimit は呼ばれない', async () => {
     verifyTurnstileMock.mockResolvedValue({ ok: false, reason: 'invalid-input-response' })
     const { POST } = await import('@/app/api/minutes/format-item/route')
     const res = await POST(makeFormatItemRequest({ turnstileToken: 'bad-token' }))
@@ -198,22 +198,27 @@ describe('/api/minutes/format-item — guest rate-limit', () => {
     verifyTurnstileMock.mockResolvedValue({ ok: true })
   })
 
-  it('ゲストで quota が残っている場合は 401 を返さない（SSE stream が始まる = 200）', async () => {
+  it('ゲストで quota が残っている場合は 429 を返さない（SSE stream が始まる = 200）', async () => {
     guestLimitMock.mockResolvedValue({ success: true, remaining: 1, reset: 0 })
     const { POST } = await import('@/app/api/minutes/format-item/route')
     const res = await POST(makeFormatItemRequest())
-    // AI_NOT_CONFIGURED (env なし) か stream が返るが、401 でないことを確認
-    expect(res.status).not.toBe(401)
+    // AI_NOT_CONFIGURED (env なし) か stream が返るが、429 でないことを確認
+    expect(res.status).not.toBe(429)
   })
 
-  it('ゲストで quota 超過の場合は 401 + AI_LIMIT_GUEST を返す', async () => {
+  it('ゲストで quota 超過の場合は 429 + GUEST_AI_DAILY_LIMIT を返す', async () => {
     guestLimitMock.mockResolvedValue({ success: false, remaining: 0, reset: Date.now() + 1000 })
     const { POST } = await import('@/app/api/minutes/format-item/route')
     const res = await POST(makeFormatItemRequest())
-    expect(res.status).toBe(401)
-    const body = await res.json() as { error: string; loginUrl: string }
-    expect(body.error).toBe('AI_LIMIT_GUEST')
-    expect(body.loginUrl).toContain('/login')
+    expect(res.status).toBe(429)
+    const body = await res.json() as { error: string }
+    expect(body.error).toBe('GUEST_AI_DAILY_LIMIT')
+    // loginUrl フィールドは無い（時間経過で自動復帰するスロットル）。
+    expect((body as Record<string, unknown>).loginUrl).toBeUndefined()
+    // Retry-After ヘッダーが数値秒で乗ること。
+    const retryAfter = res.headers.get('Retry-After')
+    expect(retryAfter).not.toBeNull()
+    expect(Number(retryAfter)).toBeGreaterThanOrEqual(1)
   })
 
   it('ゲスト時の limit キーは "ip:1.2.3.4" を使う', async () => {
@@ -236,7 +241,7 @@ describe('/api/minutes/format-item — guest rate-limit', () => {
     expect(guestLimitMock).toHaveBeenCalledWith('ip:anonymous')
   })
 
-  it('ログイン済みの場合は guestAiLimit を呼ばない', async () => {
+  it('ログイン済みの場合は guestAiDailyLimit を呼ばない', async () => {
     getUserMock.mockResolvedValue({ data: { user: { id: 'user-uuid' } } })
     guestLimitMock.mockResolvedValue({ success: true, remaining: 2, reset: 0 })
     const { POST } = await import('@/app/api/minutes/format-item/route')
@@ -254,7 +259,7 @@ describe('/api/minutes/chat/stream — Turnstile gate (S2-1)', () => {
     getUserMock.mockResolvedValue({ data: { user: null } })
   })
 
-  it('Turnstile 検証失敗 → 403 TURNSTILE_FAILED、guestAiLimit は呼ばれない', async () => {
+  it('Turnstile 検証失敗 → 403 TURNSTILE_FAILED、guestAiDailyLimit は呼ばれない', async () => {
     verifyTurnstileMock.mockResolvedValue({ ok: false, reason: 'invalid-input-response' })
     const { POST } = await import('@/app/api/minutes/chat/stream/route')
     const res = await POST(makeChatStreamRequest({ turnstileToken: 'bad-token' }))
@@ -301,14 +306,19 @@ describe('/api/minutes/chat/stream — guest rate-limit', () => {
     verifyTurnstileMock.mockResolvedValue({ ok: true })
   })
 
-  it('ゲストで quota 超過の場合は 401 + AI_LIMIT_GUEST を返す', async () => {
+  it('ゲストで quota 超過の場合は 429 + GUEST_AI_DAILY_LIMIT を返す', async () => {
     guestLimitMock.mockResolvedValue({ success: false, remaining: 0, reset: Date.now() + 1000 })
     const { POST } = await import('@/app/api/minutes/chat/stream/route')
     const res = await POST(makeChatStreamRequest())
-    expect(res.status).toBe(401)
-    const body = await res.json() as { error: string; loginUrl: string }
-    expect(body.error).toBe('AI_LIMIT_GUEST')
-    expect(body.loginUrl).toContain('/login')
+    expect(res.status).toBe(429)
+    const body = await res.json() as { error: string }
+    expect(body.error).toBe('GUEST_AI_DAILY_LIMIT')
+    // loginUrl は無い（時間経過で自動復帰するスロットル）。
+    expect((body as Record<string, unknown>).loginUrl).toBeUndefined()
+    // Retry-After ヘッダーが乗ること。
+    const retryAfter = res.headers.get('Retry-After')
+    expect(retryAfter).not.toBeNull()
+    expect(Number(retryAfter)).toBeGreaterThanOrEqual(1)
   })
 
   it('ゲストで quota が残っている場合 template 取得まで進む（stream or 404）', async () => {
@@ -316,8 +326,8 @@ describe('/api/minutes/chat/stream — guest rate-limit', () => {
     guestLimitMock.mockResolvedValue({ success: true, remaining: 1, reset: 0 })
     const { POST } = await import('@/app/api/minutes/chat/stream/route')
     const res = await POST(makeChatStreamRequest())
-    // Either 404 (template mock returns null) or non-401, never 401
-    expect(res.status).not.toBe(401)
+    // Either 404 (template mock returns null) or non-429, never 429
+    expect(res.status).not.toBe(429)
   })
 
   it('ゲスト時の limit キーは "ip:1.2.3.4" を使う', async () => {
@@ -327,7 +337,7 @@ describe('/api/minutes/chat/stream — guest rate-limit', () => {
     expect(guestLimitMock).toHaveBeenCalledWith('ip:1.2.3.4')
   })
 
-  it('ログイン済みの場合は guestAiLimit を呼ばない', async () => {
+  it('ログイン済みの場合は guestAiDailyLimit を呼ばない', async () => {
     getUserMock.mockResolvedValue({ data: { user: { id: 'user-uuid' } } })
     guestLimitMock.mockResolvedValue({ success: true, remaining: 2, reset: 0 })
     const { POST } = await import('@/app/api/minutes/chat/stream/route')
@@ -367,7 +377,7 @@ describe('/api/minutes/chat/stream — builtin template guard', () => {
     expect(res.status).not.toBe(403)
   })
 
-  it('AI_LIMIT_GUEST レスポンスに loginUrl が含まれる', async () => {
+  it('GUEST_AI_DAILY_LIMIT レスポンスは Retry-After ヘッダーを持ち loginUrl は含まない', async () => {
     guestLimitMock.mockResolvedValue({ success: false, remaining: 0, reset: Date.now() + 1000 })
     const { POST } = await import('@/app/api/minutes/chat/stream/route')
     const req = new Request('http://localhost/api/minutes/chat/stream', {
@@ -386,10 +396,12 @@ describe('/api/minutes/chat/stream — builtin template guard', () => {
       }),
     })
     const res = await POST(req)
-    expect(res.status).toBe(401)
-    const body = await res.json() as { error: string; loginUrl: string }
-    expect(body.error).toBe('AI_LIMIT_GUEST')
-    expect(body.loginUrl).toContain('/login')
-    expect(body.loginUrl).toContain('next=')
+    expect(res.status).toBe(429)
+    const body = await res.json() as { error: string }
+    expect(body.error).toBe('GUEST_AI_DAILY_LIMIT')
+    expect((body as Record<string, unknown>).loginUrl).toBeUndefined()
+    const retryAfter = res.headers.get('Retry-After')
+    expect(retryAfter).not.toBeNull()
+    expect(Number(retryAfter)).toBeGreaterThanOrEqual(1)
   })
 })

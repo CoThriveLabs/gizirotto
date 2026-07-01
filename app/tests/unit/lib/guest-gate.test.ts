@@ -1,18 +1,18 @@
 /**
- * Tests for guestAiGate helper.
+ * Tests for guestAiGate helper (GA6 スロットル仕様).
  *
  * Verifies:
  *   - Turnstile failure → 403 TURNSTILE_FAILED (limit not consumed)
- *   - Limit exhausted → 401 AI_LIMIT_GUEST with loginUrl
+ *   - Limit exhausted → 429 GUEST_AI_DAILY_LIMIT + Retry-After（ログイン誘導しない）
  *   - Gate order: Turnstile first, then limit
  *   - Pass-through: both checks succeed → { ok: true }
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 
 // ---- hoisted mocks ----
-const { verifyTurnstileMock, guestAiLimitMock } = vi.hoisted(() => ({
+const { verifyTurnstileMock, guestAiDailyLimitMock } = vi.hoisted(() => ({
   verifyTurnstileMock: vi.fn(),
-  guestAiLimitMock: vi.fn(),
+  guestAiDailyLimitMock: vi.fn(),
 }))
 
 vi.mock('@/lib/turnstile', () => ({
@@ -20,7 +20,7 @@ vi.mock('@/lib/turnstile', () => ({
 }))
 
 vi.mock('@/lib/ratelimit', () => ({
-  guestAiLimit: { limit: (...args: unknown[]) => guestAiLimitMock(...args) },
+  guestAiDailyLimit: { limit: (...args: unknown[]) => guestAiDailyLimitMock(...args) },
 }))
 
 // server-only stub
@@ -30,7 +30,7 @@ import { guestAiGate } from '@/lib/guest-gate'
 
 beforeEach(() => {
   verifyTurnstileMock.mockResolvedValue({ ok: true })
-  guestAiLimitMock.mockResolvedValue({ success: true, remaining: 1, reset: 0 })
+  guestAiDailyLimitMock.mockResolvedValue({ success: true, remaining: 1, reset: 0 })
 })
 
 describe('guestAiGate — Turnstile failure', () => {
@@ -67,38 +67,64 @@ describe('guestAiGate — Turnstile failure', () => {
 
     await guestAiGate({ token: 'bad-token', ip: '1.2.3.4' })
 
-    expect(guestAiLimitMock).not.toHaveBeenCalled()
+    expect(guestAiDailyLimitMock).not.toHaveBeenCalled()
   })
 })
 
-describe('guestAiGate — limit exhausted', () => {
-  it('returns 401 AI_LIMIT_GUEST when limit is consumed', async () => {
-    guestAiLimitMock.mockResolvedValue({ success: false, remaining: 0, reset: Date.now() + 5000 })
+describe('guestAiGate — daily limit exhausted', () => {
+  it('returns 429 GUEST_AI_DAILY_LIMIT when limit is consumed', async () => {
+    guestAiDailyLimitMock.mockResolvedValue({
+      success: false,
+      remaining: 0,
+      reset: Date.now() + 5000,
+    })
 
     const result = await guestAiGate({ token: 'ok-token', ip: '2.3.4.5' })
 
     expect(result.ok).toBe(false)
     if (!result.ok) {
-      expect(result.response.status).toBe(401)
-      const body = await result.response.json() as { error: string; loginUrl: string }
-      expect(body.error).toBe('AI_LIMIT_GUEST')
-      expect(body.loginUrl).toContain('/login')
+      expect(result.response.status).toBe(429)
+      const body = await result.response.json() as { error: string }
+      expect(body.error).toBe('GUEST_AI_DAILY_LIMIT')
+      // loginUrl は含めない（時間経過で自動復帰するスロットル）。
+      expect((body as Record<string, unknown>).loginUrl).toBeUndefined()
     }
   })
 
-  it('includes the referer in the loginUrl next param', async () => {
-    guestAiLimitMock.mockResolvedValue({ success: false, remaining: 0, reset: Date.now() + 5000 })
-
-    const result = await guestAiGate({
-      token: 'ok-token',
-      ip: '2.3.4.5',
-      referer: 'https://example.com/templates/new',
+  it('includes Retry-After header (seconds >= 1) when limit is exhausted', async () => {
+    // reset を過去にセットしても Retry-After は 1 秒未満にならないこと（Math.max(1, ...) 防御）。
+    guestAiDailyLimitMock.mockResolvedValue({
+      success: false,
+      remaining: 0,
+      reset: Date.now() - 5000,
     })
+
+    const result = await guestAiGate({ token: 'ok-token', ip: '2.3.4.5' })
 
     expect(result.ok).toBe(false)
     if (!result.ok) {
-      const body = await result.response.json() as { loginUrl: string }
-      expect(body.loginUrl).toContain('next=')
+      const retryAfter = result.response.headers.get('Retry-After')
+      expect(retryAfter).not.toBeNull()
+      expect(Number(retryAfter)).toBeGreaterThanOrEqual(1)
+    }
+  })
+
+  it('Retry-After reflects reset epoch when in the future', async () => {
+    const resetMs = Date.now() + 60_000
+    guestAiDailyLimitMock.mockResolvedValue({
+      success: false,
+      remaining: 0,
+      reset: resetMs,
+    })
+
+    const result = await guestAiGate({ token: 'ok-token', ip: '2.3.4.5' })
+
+    expect(result.ok).toBe(false)
+    if (!result.ok) {
+      const retryAfter = Number(result.response.headers.get('Retry-After'))
+      // 60秒 ±5秒 で妥当性のみ確認（実行時刻の誤差吸収）。
+      expect(retryAfter).toBeGreaterThan(50)
+      expect(retryAfter).toBeLessThan(65)
     }
   })
 })
@@ -119,6 +145,6 @@ describe('guestAiGate — pass-through', () => {
   it('calls limit with ip-prefixed key', async () => {
     await guestAiGate({ token: 'ok', ip: '5.5.5.5' })
 
-    expect(guestAiLimitMock).toHaveBeenCalledWith('ip:5.5.5.5')
+    expect(guestAiDailyLimitMock).toHaveBeenCalledWith('ip:5.5.5.5')
   })
 })

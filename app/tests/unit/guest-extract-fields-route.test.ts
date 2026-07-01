@@ -3,7 +3,7 @@
  * extractFieldsFromChat Server Action.
  *
  * Mocking strategy mirrors tests/unit/guest-ai-limit-route.test.ts: mock the low-level
- * dependencies (verifyTurnstile / guestAiLimit) and let the real guestAiGate run, rather
+ * dependencies (verifyTurnstile / guestAiDailyLimit) and let the real guestAiGate run, rather
  * than mocking guestAiGate itself — this exercises the actual gate composition.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest'
@@ -18,9 +18,9 @@ vi.mock('@/lib/turnstile', () => ({
   verifyTurnstile: (...args: unknown[]) => verifyTurnstileMock(...args),
 }))
 
-const guestAiLimitMock = vi.fn()
+const guestAiDailyLimitMock = vi.fn()
 vi.mock('@/lib/ratelimit', () => ({
-  guestAiLimit: { limit: (...args: unknown[]) => guestAiLimitMock(...args) },
+  guestAiDailyLimit: { limit: (...args: unknown[]) => guestAiDailyLimitMock(...args) },
 }))
 
 vi.mock('@/lib/client-ip', () => ({
@@ -62,12 +62,12 @@ function makeRequest(body: unknown, extraHeaders: Record<string, string> = {}) {
 beforeEach(() => {
   getUserMock.mockReset()
   verifyTurnstileMock.mockReset()
-  guestAiLimitMock.mockReset()
+  guestAiDailyLimitMock.mockReset()
   getTemplateMock.mockReset()
   createMock.mockReset()
   getUserMock.mockResolvedValue({ data: { user: null } })
   verifyTurnstileMock.mockResolvedValue({ ok: true })
-  guestAiLimitMock.mockResolvedValue({ success: true, remaining: 1, reset: 0 })
+  guestAiDailyLimitMock.mockResolvedValue({ success: true, remaining: 1, reset: 0 })
   getTemplateMock.mockResolvedValue({ fields: [{ name: 'attendees', label_ja: '参加者' }] })
   process.env.ANTHROPIC_API_KEY = 'test-key'
   process.env.ANTHROPIC_MODEL = 'test-model'
@@ -85,7 +85,7 @@ describe('POST /api/minutes/chat/extract-fields', () => {
     expect(getTemplateMock).not.toHaveBeenCalled()
   })
 
-  it('(a) Turnstile 検証失敗 → 403 TURNSTILE_FAILED・guestAiLimit は呼ばれない', async () => {
+  it('(a) Turnstile 検証失敗 → 403 TURNSTILE_FAILED・guestAiDailyLimit は呼ばれない', async () => {
     verifyTurnstileMock.mockResolvedValue({ ok: false, reason: 'invalid-input-response' })
     const res = await POST(
       makeRequest({
@@ -96,12 +96,12 @@ describe('POST /api/minutes/chat/extract-fields', () => {
     )
     expect(res.status).toBe(403)
     expect((await res.json()).error).toBe('TURNSTILE_FAILED')
-    expect(guestAiLimitMock).not.toHaveBeenCalled()
+    expect(guestAiDailyLimitMock).not.toHaveBeenCalled()
     expect(getTemplateMock).not.toHaveBeenCalled()
   })
 
-  it('(b) guestAiLimit 到達 → 401 AI_LIMIT_GUEST', async () => {
-    guestAiLimitMock.mockResolvedValue({
+  it('(b) guestAiDailyLimit 到達 → 429 GUEST_AI_DAILY_LIMIT + Retry-After', async () => {
+    guestAiDailyLimitMock.mockResolvedValue({
       success: false,
       remaining: 0,
       reset: Date.now() + 1000,
@@ -109,10 +109,15 @@ describe('POST /api/minutes/chat/extract-fields', () => {
     const res = await POST(
       makeRequest({ templateId: BUILTIN_ID, conversation: VALID_CONVERSATION }),
     )
-    expect(res.status).toBe(401)
-    const body = (await res.json()) as { error: string; loginUrl: string }
-    expect(body.error).toBe('AI_LIMIT_GUEST')
-    expect(body.loginUrl).toContain('/login')
+    expect(res.status).toBe(429)
+    const body = (await res.json()) as { error: string }
+    expect(body.error).toBe('GUEST_AI_DAILY_LIMIT')
+    // loginUrl は含めない（時間経過で自動復帰）。
+    expect((body as Record<string, unknown>).loginUrl).toBeUndefined()
+    // Retry-After ヘッダーが乗ること。
+    const retryAfter = res.headers.get('Retry-After')
+    expect(retryAfter).not.toBeNull()
+    expect(Number(retryAfter)).toBeGreaterThanOrEqual(1)
     expect(getTemplateMock).not.toHaveBeenCalled()
   })
 
@@ -213,9 +218,9 @@ describe('POST /api/minutes/chat/extract-fields', () => {
     expect((await res.json()).error).toBe('NO_TOOL_USE_BLOCK')
   })
 
-  it('ログイン済みの場合は guestAiLimit を呼ばない（早期 403 return の確認）', async () => {
+  it('ログイン済みの場合は guestAiDailyLimit を呼ばない（早期 403 return の確認）', async () => {
     getUserMock.mockResolvedValue({ data: { user: { id: 'u1' } } })
     await POST(makeRequest({ templateId: BUILTIN_ID, conversation: VALID_CONVERSATION }))
-    expect(guestAiLimitMock).not.toHaveBeenCalled()
+    expect(guestAiDailyLimitMock).not.toHaveBeenCalled()
   })
 })

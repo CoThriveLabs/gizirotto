@@ -75,7 +75,7 @@ describe('ratelimit fail-safe', () => {
     vi.stubEnv('NODE_ENV', 'test')
 
     const mod = await import('@/lib/ratelimit')
-    const result = await mod.guestAiLimit.limit('ip:test')
+    const result = await mod.guestAiDailyLimit.limit('ip:test')
     expect(result.success).toBe(true)
   })
 })
