@@ -79,6 +79,7 @@ vi.mock('@/app/(dashboard)/templates/[id]/bbox-pane', () => {
 
 import { AdjustView } from '@/app/(dashboard)/minutes/[id]/adjust/AdjustView'
 import type { TemplateFieldDef } from '@/app/(dashboard)/minutes/[id]/adjust/AdjustView'
+import type { UseGuestTurnstileGate } from '@/hooks/useGuestTurnstileGate'
 import { PdfFieldSchemaZ, type PdfField } from '@/lib/ai/schemas/pdf-field-schema'
 
 function makeTemplateField(name: string, label: string): TemplateFieldDef {
@@ -100,7 +101,7 @@ const PDF_FIELDS: PdfField[] = [makePdfField('attendees', '参加者')]
 
 let fetchCalls: { url: string; body: unknown }[] = []
 
-function guestFetchMock() {
+function guestFetchMock(opts: { formatItemOk?: boolean } = {}) {
   fetchCalls = []
   globalThis.fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = typeof input === 'string' ? input : input.toString()
@@ -112,12 +113,67 @@ function guestFetchMock() {
         blob: async () => new Blob(['fake-png-bytes']),
       } as unknown as Response
     }
+    if (url.includes('/bbox-editor')) {
+      // ログイン版が pageSizes 取得に使う認証 route の最小モック。
+      return {
+        ok: true,
+        json: async () => ({
+          editable: true,
+          pageSizes: [
+            {
+              page: 1,
+              widthPt: 595,
+              heightPt: 842,
+              pixelWidth: 595,
+              pixelHeight: 842,
+            },
+          ],
+        }),
+      } as unknown as Response
+    }
+    if (url.includes('/render-image')) {
+      // ログイン版の背景 fetch。signedUrl JSON を返す。
+      return {
+        ok: true,
+        json: async () => ({ signedUrl: 'https://example.com/bg.png' }),
+      } as unknown as Response
+    }
+    if (url.includes('/api/minutes/format-item')) {
+      const ok = opts.formatItemOk !== false
+      if (!ok) {
+        return { ok: false, status: 403, body: null, json: async () => ({}) } as unknown as Response
+      }
+      // 最小の SSE ストリーム（delta なし・done のみ）でも onFormat の catch 経路（NO_OUTPUT）を
+      // 通す。body を取れないので簡易に空 stream を返す。
+      const encoder = new TextEncoder()
+      const stream = new ReadableStream({
+        pull(controller) {
+          controller.enqueue(encoder.encode('data: {"type":"done"}\n\n'))
+          controller.close()
+        },
+      })
+      return { ok: true, body: stream } as unknown as Response
+    }
     return { ok: true, json: async () => ({}) } as Response
   }) as unknown as typeof fetch
 }
 
+/**
+ * Test double for UseGuestTurnstileGate. consumeToken は即 token を返す fake。
+ * bindWidget は no-op。テストで token 値を変えたい場合は factory 引数で差し替える。
+ */
+function makeFakeTurnstileGate(token: string | undefined = 'test-turnstile-token'): UseGuestTurnstileGate {
+  return {
+    onToken: vi.fn(),
+    consumeToken: vi.fn(async () => token),
+    reset: vi.fn(),
+    bindWidget: vi.fn(),
+  }
+}
+
 async function renderGuestAdjust(
   onGuestSave: (draft: unknown) => void = vi.fn(),
+  guestTurnstileGate?: UseGuestTurnstileGate,
 ) {
   const initialValues: Record<string, string> = { attendees: '' }
   const result = render(
@@ -133,6 +189,32 @@ async function renderGuestAdjust(
       guestMode
       renderImageEndpoint="/api/guest/render-image"
       onGuestSave={onGuestSave}
+      guestTurnstileGate={guestTurnstileGate}
+    />,
+  )
+  await act(async () => {
+    await new Promise((r) => setTimeout(r, 0))
+    await new Promise((r) => setTimeout(r, 0))
+  })
+  return result
+}
+
+/**
+ * ログインユーザー版（guestMode/guestTurnstileGate 未指定）を render。
+ * (j) 回帰テスト: onFormat の body に turnstileToken が乗らないことを検証する。
+ */
+async function renderAuthedAdjust() {
+  const initialValues: Record<string, string> = { attendees: '' }
+  const result = render(
+    <AdjustView
+      minuteId="m-1"
+      templateId="00000000-0000-0000-0000-000000000001"
+      fields={FIELDS}
+      pdfFields={PDF_FIELDS}
+      initialOverrides={{}}
+      initialValues={initialValues}
+      initialTitle="家族会議"
+      initialMeetingDate="2026-07-01"
     />,
   )
   await act(async () => {
@@ -291,5 +373,65 @@ describe('AdjustView guestMode — 「閲覧画面に戻る」導線', () => {
     expect(routerPushSpy).toHaveBeenCalledWith('/templates')
     expect(saveMinuteAdjustSpy).not.toHaveBeenCalled()
     expect(screen.queryByRole('dialog')).toBeNull()
+  })
+})
+
+describe('AdjustView guestMode — GA5 format-item Turnstile ゲート', () => {
+  it('(i) guestMode + guestTurnstileGate 指定下の onFormat: body に turnstileToken が含まれる', async () => {
+    const gate = makeFakeTurnstileGate('guest-token-xyz')
+    const { container } = await renderGuestAdjust(vi.fn(), gate)
+    await makeDirty(container)
+
+    // 「整形する」ボタンを押下
+    await act(async () => {
+      // PC/スマホ両方の Inspector が描画されるため getAllByRole で複数取得し、最初を発火。
+      fireEvent.click(screen.getAllByRole('button', { name: '整形する' })[0])
+      await new Promise((r) => setTimeout(r, 0))
+    })
+
+    await waitFor(() => {
+      expect(fetchCalls.some((c) => c.url.includes('/api/minutes/format-item'))).toBe(true)
+    })
+    const formatCall = fetchCalls.find((c) => c.url.includes('/api/minutes/format-item'))!
+    const body = formatCall.body as { turnstileToken?: string; field_name?: string }
+    expect(body.turnstileToken).toBe('guest-token-xyz')
+    expect(body.field_name).toBe('attendees')
+    // gate.consumeToken が呼ばれたこと
+    expect(gate.consumeToken).toHaveBeenCalled()
+  })
+
+  it('(j) 回帰: ログイン版（guestTurnstileGate 未指定）の onFormat: body に turnstileToken が含まれない', async () => {
+    const { container } = await renderAuthedAdjust()
+    await makeDirty(container)
+
+    await act(async () => {
+      // PC/スマホ両方の Inspector が描画されるため getAllByRole で複数取得し、最初を発火。
+      fireEvent.click(screen.getAllByRole('button', { name: '整形する' })[0])
+      await new Promise((r) => setTimeout(r, 0))
+    })
+
+    await waitFor(() => {
+      expect(fetchCalls.some((c) => c.url.includes('/api/minutes/format-item'))).toBe(true)
+    })
+    const formatCall = fetchCalls.find((c) => c.url.includes('/api/minutes/format-item'))!
+    const body = formatCall.body as Record<string, unknown>
+    expect(Object.prototype.hasOwnProperty.call(body, 'turnstileToken')).toBe(false)
+  })
+
+  it('format-item が失敗した場合、gate.reset が呼ばれる（次回チャレンジ発火）', async () => {
+    guestFetchMock({ formatItemOk: false })
+    const gate = makeFakeTurnstileGate('will-be-consumed')
+    const { container } = await renderGuestAdjust(vi.fn(), gate)
+    await makeDirty(container)
+
+    await act(async () => {
+      // PC/スマホ両方の Inspector が描画されるため getAllByRole で複数取得し、最初を発火。
+      fireEvent.click(screen.getAllByRole('button', { name: '整形する' })[0])
+      await new Promise((r) => setTimeout(r, 0))
+    })
+
+    await waitFor(() => {
+      expect(gate.reset).toHaveBeenCalled()
+    })
   })
 })

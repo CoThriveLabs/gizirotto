@@ -28,11 +28,32 @@ vi.mock('@/server/minutes', () => ({
   createMinute: (...args: unknown[]) => createMinuteMock(...args),
 }))
 
+// Turnstile モックの挙動を各テストで切り替えられるよう外部変数で制御する。
+// autoToken: mount 時に即トークンを発火するか（GA2/GA4 系の既存テスト = true）
+// GA5 系（race 検証）は false にして、テスト内で明示的に手動発火する。
+const turnstileControls = {
+  autoToken: true as boolean,
+  latestOnToken: null as ((t: string) => void) | null,
+  latestRef: null as { current: { reset: () => void } | null } | null,
+  resetMock: vi.fn(),
+}
 vi.mock('@/components/auth/TurnstileWidget', () => ({
-  TurnstileWidget: ({ onToken }: { onToken: (t: string) => void }) => {
-    onToken('dummy-turnstile-token')
-    return null
-  },
+  TurnstileWidget: React.forwardRef(
+    ({ onToken }: { onToken: (t: string) => void }, ref) => {
+      turnstileControls.latestOnToken = onToken
+      // ref callback を叩いて gate.bindWidget を呼ぶ（AdjustView/ChatView 側は ref callback 経由）。
+      if (typeof ref === 'function') {
+        ref({ reset: turnstileControls.resetMock })
+      } else if (ref && typeof ref === 'object') {
+        ref.current = { reset: turnstileControls.resetMock }
+      }
+      // 既存テスト互換: 初期化直後に即トークン発火。
+      if (turnstileControls.autoToken) {
+        onToken('dummy-turnstile-token')
+      }
+      return null
+    },
+  ),
 }))
 vi.mock('@/components/usage/limit-modal', () => ({
   LimitModal: () => null,
@@ -114,6 +135,9 @@ beforeEach(() => {
   extractFieldsFromChatMock.mockReset()
   createMinuteMock.mockReset()
   pushMock.mockReset()
+  turnstileControls.autoToken = true
+  turnstileControls.latestOnToken = null
+  turnstileControls.resetMock.mockReset()
   sessionStorage.clear()
   // 非ゲスト経路でも initSession が createChatSession を呼ぶため既定の解決値を用意する
   // （ゲスト経路は crypto.randomUUID() を使うため未使用・無害）。
@@ -247,6 +271,72 @@ describe('ChatView — isGuest=true の onFinalize', () => {
   })
 })
 
+describe('ChatView — GA5 Turnstile ゲート', () => {
+  it('(f) 初回 kick-off 時、Turnstile トークン未到着なら chat/stream fetch が呼ばれない（待機している）', async () => {
+    turnstileControls.autoToken = false // token を発火しない
+    const fetchMock = makeFetchMock()
+    global.fetch = fetchMock
+
+    await act(async () => {
+      render(<ChatView {...DEFAULT_PROPS} isGuest />)
+    })
+    // 100ms 待っても fetch は 0 件（consumeToken() で waiter に留まっている）。
+    await new Promise((r) => setTimeout(r, 100))
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  it('(g) onToken 発火後に kick-off fetch が呼ばれ、body.turnstileToken が非空', async () => {
+    turnstileControls.autoToken = false
+    const fetchMock = makeFetchMock()
+    global.fetch = fetchMock
+
+    await act(async () => {
+      render(<ChatView {...DEFAULT_PROPS} isGuest />)
+    })
+    await waitFor(() => {
+      expect(turnstileControls.latestOnToken).not.toBeNull()
+    })
+    expect(fetchMock).not.toHaveBeenCalled()
+
+    // 手動でトークンを配信 → 待機していた consumeToken() が resolve → fetch が走る。
+    await act(async () => {
+      turnstileControls.latestOnToken!('late-token-abc')
+    })
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledTimes(1)
+    })
+    const [, init] = fetchMock.mock.calls[0]!
+    const body = JSON.parse((init as RequestInit).body as string) as {
+      turnstileToken: string
+    }
+    expect(body.turnstileToken).toBe('late-token-abc')
+  })
+
+  it('(h) chat/stream が失敗した場合、TurnstileWidget の reset が呼ばれる', async () => {
+    // chat/stream を全部 500 で失敗させる
+    const fetchMock = vi.fn().mockImplementation(() =>
+      Promise.resolve({
+        ok: false,
+        status: 500,
+        body: null,
+        json: vi.fn().mockResolvedValue({}),
+      }),
+    )
+    global.fetch = fetchMock
+
+    await act(async () => {
+      render(<ChatView {...DEFAULT_PROPS} isGuest />)
+    })
+    // kick-off で fetch → 500 → catch → gate.reset() が発火
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalled()
+    })
+    await waitFor(() => {
+      expect(turnstileControls.resetMock).toHaveBeenCalled()
+    })
+  })
+})
+
 describe('ChatView — isGuest=false（既定）の onFinalize は不変', () => {
   it('createMinute を呼び、guest-chat-draft キーは書き込まない', async () => {
     const fetchMock = makeFetchMock()
@@ -287,5 +377,10 @@ describe('ChatView — isGuest=false（既定）の onFinalize は不変', () =>
     expect(
       sessionStorage.getItem(`minutes:guest-chat-draft:${DEFAULT_PROPS.templateId}`),
     ).toBeNull()
+    // 回帰確認 (GA5): ログインユーザー経路では body に turnstileToken フィールドが乗らない。
+    for (const [, init] of fetchMock.mock.calls) {
+      const parsed = JSON.parse((init as RequestInit).body as string)
+      expect(Object.prototype.hasOwnProperty.call(parsed, 'turnstileToken')).toBe(false)
+    }
   })
 })

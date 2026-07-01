@@ -14,6 +14,8 @@ import {
   guestAdjustDraftFormId,
   GUEST_ADJUST_DRAFT_RESTORE_PATH,
 } from '@/lib/utils/guest-adjust-draft'
+import { TurnstileWidget } from '@/components/auth/TurnstileWidget'
+import { useGuestTurnstileGate } from '@/hooks/useGuestTurnstileGate'
 
 interface Props {
   templateId: string
@@ -51,6 +53,9 @@ export function GuestAdjustBootstrap({
   const router = useRouter()
   const [resolvedValues, setResolvedValues] = useState<Record<string, string> | null>(null)
   const [meetingDate] = useState<string>(() => todayLocal())
+  // guest 経路の format-item 呼び出しに Turnstile トークンを乗せる中央ゲート。
+  // AdjustView が gate.consumeToken() を await → gate.onToken 到着で resolve される。
+  const turnstileGate = useGuestTurnstileGate(true)
 
   // sessionStorage.getItem → removeItem は非冪等（1 回目で消費してしまう）。React 18 StrictMode の
   // 二重 mount（mount → cleanup → 再 mount）で 1 回目の実行が chat-draft キーを消してしまうと、
@@ -128,20 +133,28 @@ export function GuestAdjustBootstrap({
   }
 
   return (
-    <AdjustView
-      minuteId="guest"
-      templateId={templateId}
-      initialTitle={templateName}
-      initialMeetingDate={meetingDate}
-      fields={fields}
-      pdfFields={pdfFields}
-      initialOverrides={initialOverrides}
-      initialValues={resolvedValues}
-      fixedTextSizesPt={fixedTextSizesPt}
-      guestMode
-      renderImageEndpoint="/api/guest/render-image"
-      onGuestSave={handleGuestSave}
-    />
+    <>
+      <AdjustView
+        minuteId="guest"
+        templateId={templateId}
+        initialTitle={templateName}
+        initialMeetingDate={meetingDate}
+        fields={fields}
+        pdfFields={pdfFields}
+        initialOverrides={initialOverrides}
+        initialValues={resolvedValues}
+        fixedTextSizesPt={fixedTextSizesPt}
+        guestMode
+        renderImageEndpoint="/api/guest/render-image"
+        onGuestSave={handleGuestSave}
+        guestTurnstileGate={turnstileGate}
+      />
+      {/* Invisible Turnstile。format-item のゲート専用。onToken は gate 経由で AdjustView へ届く。 */}
+      <TurnstileWidget
+        ref={(w) => turnstileGate.bindWidget(w)}
+        onToken={turnstileGate.onToken}
+      />
+    </>
   )
 }
 

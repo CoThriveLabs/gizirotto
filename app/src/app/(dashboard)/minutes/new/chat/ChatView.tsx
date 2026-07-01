@@ -19,6 +19,7 @@ import { GizirottoIcon } from '@/components/GizirottoIcon'
 import { renderWithGizirotto } from '@/components/chat/renderWithGizirotto'
 import { useFormCache } from '@/lib/hooks/use-form-cache'
 import { TurnstileWidget } from '@/components/auth/TurnstileWidget'
+import { useGuestTurnstileGate } from '@/hooks/useGuestTurnstileGate'
 
 export type TemplateField = { name: string; label: string }
 
@@ -53,8 +54,10 @@ export function ChatView({ templateId, templateName, mode, fields, isGuest }: Pr
   const [aiSuggestComplete, setAiSuggestComplete] = useState(false)
   const [errorMsg, setErrorMsg] = useState<string | null>(null)
   const [finalizing, setFinalizing] = useState(false)
-  // Turnstile token for guest requests. Reset after each send to force re-challenge.
-  const [turnstileToken, setTurnstileToken] = useState<string>('')
+  // Guest Turnstile ゲート: 送信直前に await consumeToken() で到着待機（初回 kick-off が
+  // widget mount より先に走る race を吸収）。ログイン済み時は enabled=false で undefined
+  // 即 return するのでログインユーザー経路は完全不変。
+  const turnstileGate = useGuestTurnstileGate(isGuest ?? false)
   // 上限到達モーダル状態 (AI route 429 / リソース上限 ResourceLimitError 両対応)
   const [limitModal, setLimitModal] = useState<{
     open: boolean
@@ -122,10 +125,11 @@ export function ChatView({ templateId, templateName, mode, fields, isGuest }: Pr
       setMessages((prev) => [...prev, { role: 'user', content: userMessage }])
     }
 
-    // Capture and reset the token before the fetch so a re-challenge starts
-    // immediately; token is single-use and must not be reused on retry.
-    const capturedToken = turnstileToken
-    if (isGuest) setTurnstileToken('')
+    // Await token arrival. If enabled=false (logged-in), resolves undefined immediately
+    // and the ...spread below omits the field entirely — so logged-in bodies remain unchanged.
+    // For guests, this waits until TurnstileWidget's onVerify has delivered a token, fixing
+    // the initial kick-off race where the effect fired before challenge completion.
+    const capturedToken = await turnstileGate.consumeToken()
 
     let assistantText = ''
     try {
@@ -138,7 +142,7 @@ export function ChatView({ templateId, templateName, mode, fields, isGuest }: Pr
           template_id: templateId,
           history,
           latest_user_message: userMessage,
-          ...(isGuest ? { turnstileToken: capturedToken } : {}),
+          ...(capturedToken !== undefined ? { turnstileToken: capturedToken } : {}),
         }),
       })
       // 429 AI_LIMIT_EXCEEDED は modal で出し分け
@@ -234,6 +238,9 @@ export function ChatView({ templateId, templateName, mode, fields, isGuest }: Pr
       }
     } catch {
       setErrorMsg('返答の取得に失敗しました。少し時間を置いて再度お試しください。')
+      // Turnstile トークンは使い切ったので次回チャレンジを明示発火。
+      // enabled=false / widget 未 mount 時は no-op。
+      turnstileGate.reset()
       // 失敗したターンの空 assistant 行を削除
       setMessages((prev) => {
         if (prev.length > 0 && prev[prev.length - 1].role === 'assistant' && prev[prev.length - 1].content === '') {
@@ -266,24 +273,25 @@ export function ChatView({ templateId, templateName, mode, fields, isGuest }: Pr
       try {
         // ログインユーザーは既存 Server Action のまま。ゲストは Server Action 内の
         // `if (!user) throw` に必ず引っかかるため、代わりにゲスト専用 route を叩く。
-        // Turnstile トークンは sendMessage と同じ「直前にキャプチャして即リセット」使い捨て
-        // パターン。直前の送信で既に消費済みのことが多く、その場合 guestAiGate が
-        // TURNSTILE_FAILED を返すが、それは想定内 — 下の catch がそのまま
-        // memo dump fallback に合流させるので新しいエラーハンドリングは不要。
+        // Turnstile トークンは gate.consumeToken() で到着待ち（enabled=false 時は undefined）。
+        // 直前の送信で消費済みなら waiter で新チャレンジ到着まで待機する。
         let result: { values: Record<string, string> }
         if (isGuest) {
-          const capturedToken = turnstileToken
-          setTurnstileToken('')
+          const capturedToken = await turnstileGate.consumeToken()
           const res = await fetch('/api/minutes/chat/extract-fields', {
             method: 'POST',
             headers: { 'content-type': 'application/json' },
             body: JSON.stringify({
               templateId,
               conversation: messages,
-              turnstileToken: capturedToken,
+              ...(capturedToken !== undefined ? { turnstileToken: capturedToken } : {}),
             }),
           })
-          if (!res.ok) throw new Error('EXTRACT_FIELDS_FAILED')
+          if (!res.ok) {
+            // トークンを使い切ったので次回チャレンジを明示発火。既存 catch が memo dump に落とす。
+            turnstileGate.reset()
+            throw new Error('EXTRACT_FIELDS_FAILED')
+          }
           result = (await res.json()) as { values: Record<string, string> }
         } else {
           result = await extractFieldsFromChat({
@@ -482,8 +490,13 @@ export function ChatView({ templateId, templateName, mode, fields, isGuest }: Pr
 
       {/* Invisible Turnstile challenge for unauthenticated visitors.
           Mounted only when isGuest=true and site key is configured.
-          Token is reset after each send so each request gets a fresh challenge. */}
-      {isGuest && <TurnstileWidget onToken={setTurnstileToken} />}
+          Token flows through useGuestTurnstileGate so awaiters (kick-off etc.) get resolved. */}
+      {isGuest && (
+        <TurnstileWidget
+          ref={(w) => turnstileGate.bindWidget(w)}
+          onToken={turnstileGate.onToken}
+        />
+      )}
 
       {/* AI 上限 / リソース上限の到達モーダル */}
       <LimitModal

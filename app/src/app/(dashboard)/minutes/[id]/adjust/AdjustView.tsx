@@ -40,6 +40,7 @@ import { UniformFontSizeSection } from './_components/UniformFontSizeSection'
 import { useToast } from '@/components/toast/toast-context'
 import { useMinuteAdjustEditor } from '@/hooks/editor/useMinuteAdjustEditor'
 import { UnsavedChangesModal } from '@/components/editor/UnsavedChangesModal'
+import type { UseGuestTurnstileGate } from '@/hooks/useGuestTurnstileGate'
 
 export type TemplateFieldDef = {
   name: string
@@ -84,6 +85,12 @@ interface Props {
   renderImageEndpoint?: string
   /** guestMode 時の保存ボタン押下で呼ばれる。draft の永続化先（form-cache 等）は呼出側の責務。 */
   onGuestSave?: (draft: GuestMinuteDraft) => void
+  /**
+   * guestMode 時に format-item route へ Turnstile トークンを乗せるゲート。呼出側
+   * （GuestAdjustBootstrap）が TurnstileWidget を保持し、その onToken をこの gate に接続する。
+   * 未指定 = ログインユーザー経路（body に turnstileToken フィールドを一切含めない）。
+   */
+  guestTurnstileGate?: UseGuestTurnstileGate
 }
 
 /**
@@ -237,6 +244,7 @@ export function AdjustView({
   guestMode,
   renderImageEndpoint,
   onGuestSave,
+  guestTurnstileGate,
 }: Props) {
   const router = useRouter()
   const { showToast } = useToast()
@@ -419,6 +427,11 @@ export function AdjustView({
     setErrorMsg(null)
     editor.pushUndoOther(name)
     try {
+      // guest 時のみ Turnstile トークンを await。gate 未指定（ログインユーザー）は undefined 即
+      // return なので、body に turnstileToken フィールドは一切乗らない（回帰テスト対象）。
+      const capturedToken = guestTurnstileGate
+        ? await guestTurnstileGate.consumeToken()
+        : undefined
       const res = await fetch('/api/minutes/format-item', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
@@ -429,9 +442,14 @@ export function AdjustView({
           ...(tones[name] === 'custom'
             ? { custom_text: customTexts[name].trim() }
             : {}),
+          ...(capturedToken !== undefined ? { turnstileToken: capturedToken } : {}),
         }),
       })
-      if (!res.ok || !res.body) throw new Error('FORMAT_FAILED')
+      if (!res.ok || !res.body) {
+        // 失敗時は次回チャレンジを明示発火（gate 未指定なら no-op）。
+        guestTurnstileGate?.reset()
+        throw new Error('FORMAT_FAILED')
+      }
       const reader = res.body.getReader()
       const decoder = new TextDecoder()
       let buffer = ''
