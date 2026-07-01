@@ -46,6 +46,30 @@ export function resolveBuiltinBboxSlugFromProcessedPath(
   return PROCESSED_PATH_TO_SLUG[processedPath] ?? null
 }
 
+/**
+ * templates.id（UUID）から bbox JSON の slug を直接逆引きする。seed.sql の builtin 3 行と
+ * 1:1 対応するハードコードマップ（PROCESSED_PATH_TO_SLUG と同じ精神・別キー空間）。
+ *
+ * 用途: 未認証から呼べる経路（guest-render 等）で、templates テーブルへの問い合わせを
+ * 一切行わずに slug を解決するため。呼出側は別途 isBuiltinTemplate(templateId) で
+ * builtin ID であることを必ず確認してから使うこと（本関数自身は未知 ID を null で弾くのみで
+ * 認可は行わない）。
+ *
+ * Gotcha: 新しい builtin テンプレを追加するときは、ここと BUILTIN_TEMPLATE_IDS
+ * （src/lib/templates/builtin-ids.ts）と PROCESSED_PATH_TO_SLUG の 3 箇所を同時に揃えること。
+ */
+const TEMPLATE_ID_TO_SLUG: Readonly<Record<string, BuiltinBboxSlug>> = {
+  '00000000-0000-0000-0000-000000000001': 'family-meeting',
+  '00000000-0000-0000-0000-000000000002': 'child-schedule',
+  '00000000-0000-0000-0000-000000000003': 'budget-report',
+}
+
+export function resolveBuiltinBboxSlugFromTemplateId(
+  templateId: string,
+): BuiltinBboxSlug | null {
+  return TEMPLATE_ID_TO_SLUG[templateId] ?? null
+}
+
 /** AdjustView の FieldOverride と同形（x/y/w/h を持つ部分上書き構造）。 */
 export type BuiltinBboxEntry = { x: number; y: number; w: number; h: number }
 

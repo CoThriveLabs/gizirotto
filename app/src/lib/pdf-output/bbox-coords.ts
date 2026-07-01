@@ -99,6 +99,20 @@ export interface PageMeta {
   pixelHeight: number
 }
 
+/**
+ * builtin / 非 PDF テンプレ向けの固定 A4 ページサイズ。bbox-editor route の
+ * SYNTHETIC_A4_PAGE と同値（builtin は source_format !== 'pdf' のため常にこの値に揃う）。
+ * 未認証から呼べる経路（guest adjust 等）で `/api/templates/[id]/bbox-editor`
+ * （認証必須）を呼ばずに同じ pageSizes を得るための共有定数。
+ */
+export const BUILTIN_SYNTHETIC_A4_PAGE: PageMeta = {
+  page: 1,
+  widthPt: 595,
+  heightPt: 842,
+  pixelWidth: 595,
+  pixelHeight: 842,
+}
+
 export interface BboxPt {
   x: number
   y: number

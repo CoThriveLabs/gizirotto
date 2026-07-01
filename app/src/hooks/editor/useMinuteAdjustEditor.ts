@@ -255,6 +255,12 @@ export interface UseMinuteAdjustEditorParams {
   previewFont: FittableFont | null
   /** bbox 直接クリック後の autoFocus 用。BboxPane と Inspector の両方が触るため本体管理。 */
   textareaRef: React.RefObject<HTMLTextAreaElement | HTMLInputElement | null>
+  /**
+   * true のとき useDebouncedSelectedBackground を無効化する（既定 false）。
+   * guest-render は selected 切替に関わらず同じ背景を返すため、selected-only 最適化が
+   * 意味を持たない（無駄な fetch を発生させないための明示的な off スイッチ）。
+   */
+  guestMode?: boolean
 }
 
 export interface UseMinuteAdjustEditor {
@@ -333,6 +339,7 @@ export function useMinuteAdjustEditor(
     pageSizes,
     previewFont,
     textareaRef,
+    guestMode,
   } = params
 
   // ── state（項目削除のため fields も state 化）─────────────────────────────
@@ -473,6 +480,7 @@ export function useMinuteAdjustEditor(
     minuteId,
     selected: hasAnyOverride ? null : selected,
     debounceMs: 300,
+    enabled: !guestMode,
   })
 
   // ── BboxPane に渡す EditorField[]（page 番号は pageSizes 先頭・1 ページ前提）──

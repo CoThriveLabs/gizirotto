@@ -264,10 +264,33 @@ export function ChatView({ templateId, templateName, mode, fields, isGuest }: Pr
       content = { '(振り分け不可)': memo }
     } else {
       try {
-        const result = await extractFieldsFromChat({
-          fields,
-          conversation: messages,
-        })
+        // ログインユーザーは既存 Server Action のまま。ゲストは Server Action 内の
+        // `if (!user) throw` に必ず引っかかるため、代わりにゲスト専用 route を叩く。
+        // Turnstile トークンは sendMessage と同じ「直前にキャプチャして即リセット」使い捨て
+        // パターン。直前の送信で既に消費済みのことが多く、その場合 guestAiGate が
+        // TURNSTILE_FAILED を返すが、それは想定内 — 下の catch がそのまま
+        // memo dump fallback に合流させるので新しいエラーハンドリングは不要。
+        let result: { values: Record<string, string> }
+        if (isGuest) {
+          const capturedToken = turnstileToken
+          setTurnstileToken('')
+          const res = await fetch('/api/minutes/chat/extract-fields', {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({
+              templateId,
+              conversation: messages,
+              turnstileToken: capturedToken,
+            }),
+          })
+          if (!res.ok) throw new Error('EXTRACT_FIELDS_FAILED')
+          result = (await res.json()) as { values: Record<string, string> }
+        } else {
+          result = await extractFieldsFromChat({
+            fields,
+            conversation: messages,
+          })
+        }
         const hasAnyValue = Object.values(result.values).some(
           (v) => typeof v === 'string' && v.trim().length > 0,
         )
@@ -309,6 +332,23 @@ export function ChatView({ templateId, templateName, mode, fields, isGuest }: Pr
     } else {
       sessionStorage.removeItem('minutes:draft-warning')
     }
+
+    // ゲストは minute レコードを持てない。抽出済み content を一度きりの sessionStorage キーで
+    // ゲスト向け AdjustView 到達ルートへ渡し、そのまま遷移する（createMinute は呼ばない）。
+    if (isGuest) {
+      try {
+        sessionStorage.setItem(
+          `minutes:guest-chat-draft:${templateId}`,
+          JSON.stringify(content),
+        )
+      } catch {
+        // 書き込み失敗は致命でない（AdjustView 側は空初期値にフォールバックする）。
+      }
+      clearSnapshot()
+      router.push(`/minutes/new/adjust?template_id=${templateId}`)
+      return
+    }
+
     try {
       const result = await createMinute({
         templateId,

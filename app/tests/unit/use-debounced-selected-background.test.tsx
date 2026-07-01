@@ -167,4 +167,53 @@ describe('useDebouncedSelectedBackground', () => {
     rerender({ selected: null })
     expect(result.current).toBeNull()
   })
+
+  it('enabled=false: selected が設定されていても fetch を呼ばず null を返す（guestMode 用 off スイッチ）', async () => {
+    const fetchMock = makeFetchMock('https://example.com/should-not-be-used.png')
+    const { result, rerender } = renderHook(
+      ({ selected }: { selected: string | null }) =>
+        useDebouncedSelectedBackground({
+          minuteId: 'm-1',
+          selected,
+          debounceMs: 300,
+          fetchImpl: fetchMock as unknown as typeof fetch,
+          enabled: false,
+        }),
+      { initialProps: { selected: null as string | null } },
+    )
+
+    rerender({ selected: 'memo' })
+    await act(async () => {
+      vi.advanceTimersByTime(300)
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    expect(fetchMock).not.toHaveBeenCalled()
+    expect(result.current).toBeNull()
+  })
+
+  it('enabled 省略時は既定 true（既存挙動・後方互換）', async () => {
+    const fetchMock = makeFetchMock('https://example.com/default-on.png')
+    const { result, rerender } = renderHook(
+      ({ selected }: { selected: string | null }) =>
+        useDebouncedSelectedBackground({
+          minuteId: 'm-1',
+          selected,
+          debounceMs: 300,
+          fetchImpl: fetchMock as unknown as typeof fetch,
+        }),
+      { initialProps: { selected: null as string | null } },
+    )
+
+    rerender({ selected: 'memo' })
+    await act(async () => {
+      vi.advanceTimersByTime(300)
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    expect(result.current).toBe('https://example.com/default-on.png')
+  })
 })

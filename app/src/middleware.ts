@@ -26,7 +26,7 @@ const PUBLIC_PATHS = [
 // x-family-id ヘッダーを注入する必要があるため。未認証時は後続の
 // `if (!user)` 分岐で個別通過させる。
 const FAMILY_SETUP_PATH = '/family/setup'
-const STATIC_FILE_EXT = /\.(svg|png|jpg|jpeg|gif|webp|ico|css|js|map|woff2?|html)$/
+const STATIC_FILE_EXT = /\.(svg|png|jpg|jpeg|gif|webp|ico|css|js|map|woff2?|otf|html)$/
 
 function isJsonClient(req: NextRequest): boolean {
   const accept = req.headers.get('accept') ?? ''
@@ -93,8 +93,18 @@ export async function middleware(request: NextRequest) {
   const GUEST_API_PATHS = [
     '/api/minutes/chat/stream',
     '/api/minutes/format-item',
+    '/api/minutes/chat/extract-fields',
   ]
   if (GUEST_API_PATHS.some((p) => pathname === p)) {
+    return NextResponse.next({ request })
+  }
+
+  // Guest-reachable builtin-asset API: gated internally (isBuiltinTemplate + zod), reads
+  // no minute/session data, so the whole /api/guest/ prefix is opened here instead of an
+  // exact-match list per route.
+  // Gotcha: do not add session-aware or write-capable routes under /api/guest/ — anything
+  // placed under this prefix bypasses the auth redirect entirely.
+  if (pathname.startsWith('/api/guest/')) {
     return NextResponse.next({ request })
   }
 

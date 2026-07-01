@@ -65,6 +65,17 @@ describe('middleware GUEST_API_PATHS — exact match allowlist', () => {
     expect(res.status).not.toBe(401)
   })
 
+  it('/api/minutes/chat/extract-fields は通過する（GA4）', async () => {
+    const res = await middleware(makeReq('/api/minutes/chat/extract-fields'))
+    expect(res.status).not.toBe(307)
+    expect(res.status).not.toBe(401)
+  })
+
+  it('/api/minutes/chat/extract-fields/extra はゲスト通過しない（配下パスは完全一致外）', async () => {
+    const res = await middleware(makeReq('/api/minutes/chat/extract-fields/extra'))
+    expect(res.status).toBe(401)
+  })
+
   it('/api/minutes/chat/stream/extra はゲスト通過しない（配下パスは完全一致外）', async () => {
     const res = await middleware(makeReq('/api/minutes/chat/stream/extra'))
     // Unauthenticated /api/* → 401 JSON (isJsonClient returns true for /api/ paths)

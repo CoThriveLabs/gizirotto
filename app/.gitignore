@@ -102,6 +102,7 @@ Thumbs.db
 .cursor/
 .vscode/
 .idea/
+.claude/
 
 # Test artifacts
 tests/screenshots/

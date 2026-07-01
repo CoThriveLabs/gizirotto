@@ -1,18 +1,24 @@
 /**
- * ManualBootstrap guest form-cache tests
+ * ManualBootstrap — isGuest=true 到達時の遷移先 + ログイン後 draft 復元（form-cache 橋渡し）テスト。
  *
- * Verifies that:
- *   - isGuest=true renders field inputs (not the spinner)
- *   - snapshot in sessionStorage is restored on mount (onRestore called)
- *   - clicking the login link triggers saveSnapshot with current field values
+ * GA2 でゲスト分岐の入力フォーム（textarea 群）を撤去し、ゲスト向け AdjustView 到達ルート
+ * （/minutes/new/adjust）への即時遷移へ置き換えた。GA3 で、ログイン後にこの画面へ戻ってきたとき
+ * ゲスト時代の draft（form-cache）を復元して createMinute + saveMinuteAdjust する橋渡しを追加した。
+ * 本ファイルはその両方の挙動を検証する。
  */
 import React from 'react'
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { render, screen, fireEvent, cleanup, act } from '@testing-library/react'
-import { makeFormCacheKey, writeFormCache } from '@/lib/utils/form-cache'
+import { render, waitFor } from '@testing-library/react'
+import { writeFormCache, makeFormCacheKey } from '@/lib/utils/form-cache'
+import {
+  guestAdjustDraftFormId,
+  GUEST_ADJUST_DRAFT_RESTORE_PATH,
+} from '@/lib/utils/guest-adjust-draft'
+import type { GuestMinuteDraft } from '@/app/(dashboard)/minutes/[id]/adjust/AdjustView'
 
 const replaceMock = vi.fn()
-const pathnameValue = '/minutes/new/manual?template_id=00000000-0000-0000-0000-000000000001'
+const createMinuteMock = vi.fn()
+const saveMinuteAdjustMock = vi.fn()
 
 vi.mock('next/navigation', () => ({
   useRouter: () => ({
@@ -21,11 +27,11 @@ vi.mock('next/navigation', () => ({
     refresh: vi.fn(),
     back: vi.fn(),
   }),
-  usePathname: () => pathnameValue,
 }))
 
 vi.mock('@/server/minutes', () => ({
-  createMinute: vi.fn(),
+  createMinute: (...args: unknown[]) => createMinuteMock(...args),
+  saveMinuteAdjust: (...args: unknown[]) => saveMinuteAdjustMock(...args),
 }))
 
 vi.mock('@/components/toast/toast-context', () => ({
@@ -35,20 +41,20 @@ vi.mock('@/components/toast/toast-context', () => ({
 import { ManualBootstrap } from '@/app/(dashboard)/minutes/new/manual/ManualBootstrap'
 
 const TID = '00000000-0000-0000-0000-000000000001'
-const FORM_ID = `minutes:new:manual:${TID}`
 
 beforeEach(() => {
-  sessionStorage.clear()
   replaceMock.mockReset()
+  createMinuteMock.mockReset()
+  saveMinuteAdjustMock.mockReset()
+  sessionStorage.clear()
 })
 
 afterEach(() => {
-  cleanup()
   sessionStorage.clear()
 })
 
 describe('ManualBootstrap — isGuest=true', () => {
-  it('フィールド入力欄と「ログインして保存する」リンクを表示する', () => {
+  it('ゲスト向け AdjustView 到達ルートへ即遷移する（createMinute は呼ばない）', async () => {
     render(
       <ManualBootstrap
         templateId={TID}
@@ -57,71 +63,13 @@ describe('ManualBootstrap — isGuest=true', () => {
         isGuest
       />,
     )
-    expect(screen.getByLabelText('議題')).toBeDefined()
-    expect(screen.getByLabelText('決定事項')).toBeDefined()
-    expect(screen.getByRole('link', { name: 'ログインして保存する' })).toBeDefined()
-  })
-
-  it('sessionStorage に snapshot があれば mount 時に値が復元される', () => {
-    const path = pathnameValue
-    writeFormCache<Record<string, string>>(
-      sessionStorage,
-      FORM_ID,
-      { 議題: '復元テスト', 決定事項: '復元OK' },
-      // useFormCache は window.location.pathname と比較するため jsdom のデフォルト値を使う
-      window.location.pathname,
-    )
-
-    render(
-      <ManualBootstrap
-        templateId={TID}
-        templateName="家族会議"
-        fields={['議題', '決定事項']}
-        isGuest
-      />,
-    )
-
-    const agendaInput = screen.getByLabelText('議題') as HTMLTextAreaElement
-    // jsdom の window.location.pathname は '/' なので expectedPath が一致すれば復元される
-    // 復元後 snapshot は削除される
-    // NOTE: pathname mismatch のケース (pathnameValue !== '/') では復元されない
-    // このテストでは useFormCache が '/' を expectedPath として期待するケースのみ検証
-    void path // referenced to avoid unused-var lint
-    expect(agendaInput).toBeDefined()
-  })
-
-  it('「ログインして保存する」クリック時に sessionStorage に snapshot が保存される', () => {
-    render(
-      <ManualBootstrap
-        templateId={TID}
-        templateName="家族会議"
-        fields={['議題', '決定事項']}
-        isGuest
-      />,
-    )
-
-    // Fill in field values
-    const agendaInput = screen.getByLabelText('議題') as HTMLTextAreaElement
-    const decisionInput = screen.getByLabelText('決定事項') as HTMLTextAreaElement
-    act(() => {
-      fireEvent.change(agendaInput, { target: { value: '来月の予定' } })
-      fireEvent.change(decisionInput, { target: { value: 'キャンプ決定' } })
+    await waitFor(() => {
+      expect(replaceMock).toHaveBeenCalledWith(`/minutes/new/adjust?template_id=${TID}`)
     })
-
-    // Click the login link (which calls saveSnapshot before navigation)
-    const loginLink = screen.getByRole('link', { name: 'ログインして保存する' })
-    act(() => {
-      fireEvent.click(loginLink)
-    })
-
-    const raw = sessionStorage.getItem(makeFormCacheKey(FORM_ID))
-    expect(raw).not.toBeNull()
-    const stored = JSON.parse(raw!) as { values: Record<string, string>; expectedPath: string }
-    expect(stored.values['議題']).toBe('来月の予定')
-    expect(stored.values['決定事項']).toBe('キャンプ決定')
+    expect(createMinuteMock).not.toHaveBeenCalled()
   })
 
-  it('fields が空のとき「メモ」フィールドが表示される', () => {
+  it('fields が空でも遷移先は変わらない', async () => {
     render(
       <ManualBootstrap
         templateId={TID}
@@ -130,6 +78,152 @@ describe('ManualBootstrap — isGuest=true', () => {
         isGuest
       />,
     )
-    expect(screen.getByLabelText('メモ')).toBeDefined()
+    await waitFor(() => {
+      expect(replaceMock).toHaveBeenCalledWith(`/minutes/new/adjust?template_id=${TID}`)
+    })
+  })
+})
+
+describe('ManualBootstrap — isGuest=false（ログイン後の本保存）', () => {
+  it('draft が無い場合は既存の空 content フローが変わらない（回帰確認）', async () => {
+    createMinuteMock.mockResolvedValue({ id: 'm-no-draft' })
+    render(
+      <ManualBootstrap
+        templateId={TID}
+        templateName="家族会議"
+        fields={['議題', '決定事項']}
+      />,
+    )
+    await waitFor(() => {
+      expect(createMinuteMock).toHaveBeenCalledTimes(1)
+    })
+    const call = createMinuteMock.mock.calls[0][0]
+    expect(call.templateId).toBe(TID)
+    expect(call.title).toBe('家族会議')
+    expect(call.content).toEqual({ 議題: '', 決定事項: '' })
+    expect(call.meetingDate).toMatch(/^\d{4}-\d{2}-\d{2}$/)
+    expect(saveMinuteAdjustMock).not.toHaveBeenCalled()
+  })
+
+  it('sessionStorage に draft（expectedPath 一致）があれば createMinute に draft の content/title/meetingDate を渡す', async () => {
+    const draft: GuestMinuteDraft = {
+      templateId: TID,
+      title: 'ゲストが入れたタイトル',
+      meetingDate: '2026-08-01',
+      content: { 議題: 'AIで話した内容', 決定事項: '来月また集まる' },
+      overrides: { 議題: { x: 10, y: 20 } },
+    }
+    writeFormCache(
+      sessionStorage,
+      guestAdjustDraftFormId(TID),
+      draft,
+      GUEST_ADJUST_DRAFT_RESTORE_PATH,
+    )
+    createMinuteMock.mockResolvedValue({ id: 'm-restored' })
+    saveMinuteAdjustMock.mockResolvedValue({ ok: true })
+
+    render(
+      <ManualBootstrap
+        templateId={TID}
+        templateName="家族会議"
+        fields={['議題', '決定事項']}
+      />,
+    )
+
+    await waitFor(() => {
+      expect(createMinuteMock).toHaveBeenCalledTimes(1)
+    })
+    const call = createMinuteMock.mock.calls[0][0]
+    expect(call.title).toBe('ゲストが入れたタイトル')
+    expect(call.meetingDate).toBe('2026-08-01')
+    expect(call.content).toEqual({ 議題: 'AIで話した内容', 決定事項: '来月また集まる' })
+
+    await waitFor(() => {
+      expect(saveMinuteAdjustMock).toHaveBeenCalledTimes(1)
+    })
+    expect(saveMinuteAdjustMock).toHaveBeenCalledWith({
+      id: 'm-restored',
+      overrides: { 議題: { x: 10, y: 20 } },
+      newFields: undefined,
+    })
+
+    // 成功後は form-cache キーが消費されている。
+    await waitFor(() => {
+      expect(
+        sessionStorage.getItem(makeFormCacheKey(guestAdjustDraftFormId(TID))),
+      ).toBeNull()
+    })
+  })
+
+  it('draft に overrides/newFields が無ければ saveMinuteAdjust は呼ばれない', async () => {
+    const draft: GuestMinuteDraft = {
+      templateId: TID,
+      title: 'タイトルのみ',
+      meetingDate: '2026-08-02',
+      content: { 議題: '本文' },
+      overrides: {},
+    }
+    writeFormCache(
+      sessionStorage,
+      guestAdjustDraftFormId(TID),
+      draft,
+      GUEST_ADJUST_DRAFT_RESTORE_PATH,
+    )
+    createMinuteMock.mockResolvedValue({ id: 'm-no-overrides' })
+
+    render(
+      <ManualBootstrap
+        templateId={TID}
+        templateName="家族会議"
+        fields={['議題', '決定事項']}
+      />,
+    )
+
+    await waitFor(() => {
+      expect(createMinuteMock).toHaveBeenCalledTimes(1)
+    })
+    expect(saveMinuteAdjustMock).not.toHaveBeenCalled()
+  })
+
+  it('expectedPath が不一致の draft（別ページ由来）は復元されず既存の空 content フローになる', async () => {
+    const draft: GuestMinuteDraft = {
+      templateId: TID,
+      title: '別ページの draft',
+      meetingDate: '2026-08-03',
+      content: { 議題: 'これは使われないはず' },
+      overrides: {},
+    }
+    // expectedPath をわざと別ページにして書き込む。
+    writeFormCache(sessionStorage, guestAdjustDraftFormId(TID), draft, '/some/other/path')
+    createMinuteMock.mockResolvedValue({ id: 'm-mismatch' })
+
+    render(
+      <ManualBootstrap
+        templateId={TID}
+        templateName="家族会議"
+        fields={['議題', '決定事項']}
+      />,
+    )
+
+    await waitFor(() => {
+      expect(createMinuteMock).toHaveBeenCalledTimes(1)
+    })
+    const call = createMinuteMock.mock.calls[0][0]
+    expect(call.title).toBe('家族会議')
+    expect(call.content).toEqual({ 議題: '', 決定事項: '' })
+  })
+
+  it('isGuest=false（既定）は通常通り createMinute を呼ぶ', async () => {
+    createMinuteMock.mockResolvedValue({ id: 'minute-xxx' })
+    render(
+      <ManualBootstrap
+        templateId={TID}
+        templateName="家族会議"
+        fields={['議題', '決定事項']}
+      />,
+    )
+    await waitFor(() => {
+      expect(createMinuteMock).toHaveBeenCalledTimes(1)
+    })
   })
 })

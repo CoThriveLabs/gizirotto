@@ -28,7 +28,7 @@ import {
   type BboxOverrides,
 } from '@/lib/pdf-output/field-override'
 import type { FittableFont } from '@/lib/pdf-output/fitting'
-import { type PageMeta } from '@/lib/pdf-output/bbox-coords'
+import { type PageMeta, BUILTIN_SYNTHETIC_A4_PAGE } from '@/lib/pdf-output/bbox-coords'
 import { UndoRedoButtons } from '@/components/editor/UndoRedoButtons'
 import { ZoomPanel } from '@/components/editor/ZoomPanel'
 import BboxPane, {
@@ -74,6 +74,29 @@ interface Props {
    * PDF / 画像経路と同じ snap 結果を得る。未指定 / 空配列なら snap 無効＝後方互換。
    */
   fixedTextSizesPt?: number[]
+  /**
+   * true のときゲストモード（既定 false・未指定時はログインユーザー経路と完全不変）。
+   * 保存ボタンは DB へ書き込まず onGuestSave のみ呼ぶ。背景 / pageSizes 取得も
+   * 認証必須 route を経由せず renderImageEndpoint / 固定 A4 を使う。
+   */
+  guestMode?: boolean
+  /** 背景 / selected-only PNG の取得先 URL（既定: 既存 /api/minutes/[id]/render-image）。 */
+  renderImageEndpoint?: string
+  /** guestMode 時の保存ボタン押下で呼ばれる。draft の永続化先（form-cache 等）は呼出側の責務。 */
+  onGuestSave?: (draft: GuestMinuteDraft) => void
+}
+
+/**
+ * guestMode 保存ボタンが onGuestSave へ渡す draft 形。ログイン後の本保存（createMinute 相当）に
+ * 必要な最小集合: テンプレ・タイトル・開催日・記入値・bbox 上書き・追加 field。
+ */
+export type GuestMinuteDraft = {
+  templateId: string
+  title: string
+  meetingDate: string
+  content: Record<string, string>
+  overrides: BboxOverrides
+  newFields?: PdfField[]
 }
 
 /** fields 配列の上限。20 で「項目を追加」disabled（hook の handleAddField ガードと一致）。 */
@@ -211,6 +234,9 @@ export function AdjustView({
   initialOverrides,
   initialValues,
   fixedTextSizesPt,
+  guestMode,
+  renderImageEndpoint,
+  onGuestSave,
 }: Props) {
   const router = useRouter()
   const { showToast } = useToast()
@@ -265,15 +291,40 @@ export function AdjustView({
     pageSizes,
     previewFont,
     textareaRef,
+    guestMode,
   })
 
   // ── 背景 raw PNG 取得 ─────────────────────────────────────────────────────
-  // /api/minutes/[id]/render-image を raw=true で呼ぶ。記入値ゼロの背景が返る。
+  // 通常: /api/minutes/[id]/render-image を raw=true で呼ぶ（記入値ゼロの背景・signedUrl 応答）。
+  // guestMode: renderImageEndpoint（既定 /api/guest/render-image）を builtin templateId 付きで
+  //   叩く。応答は PNG bytes 直返しのため signedUrl ではなく objectURL 化して使う。
   useEffect(() => {
     let cancelled = false
+    let objectUrl: string | null = null
     async function load() {
       try {
-        const res = await fetch(`/api/minutes/${minuteId}/render-image`, {
+        if (guestMode) {
+          const endpoint = renderImageEndpoint ?? '/api/guest/render-image'
+          const res = await fetch(endpoint, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            cache: 'no-store',
+            body: JSON.stringify({
+              templateId,
+              content: {},
+              overrides: {},
+              raw: true,
+            }),
+          })
+          if (!res.ok) return
+          const blob = await res.blob()
+          if (cancelled) return
+          objectUrl = URL.createObjectURL(blob)
+          setRawBgUrl(objectUrl)
+          return
+        }
+        const endpoint = renderImageEndpoint ?? `/api/minutes/${minuteId}/render-image`
+        const res = await fetch(endpoint, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           cache: 'no-store',
@@ -294,8 +345,9 @@ export function AdjustView({
     void load()
     return () => {
       cancelled = true
+      if (objectUrl) URL.revokeObjectURL(objectUrl)
     }
-  }, [minuteId])
+  }, [minuteId, templateId, guestMode, renderImageEndpoint])
 
   // 動的プレビュー vs PDF 完全一致用の OTF をロード（opentype.js + Noto Sans JP subset を遅延 import）。
   // ロード失敗時は previewFont=null 維持 → fallback（ctx.measureText 経路・劣化プレビュー）。
@@ -316,7 +368,13 @@ export function AdjustView({
   }, [])
 
   // ── pageSizes 取得（templates bbox-editor route を流用・OCR を呼ばない軽量ラスタライズ）──
+  // guestMode: 認証必須の bbox-editor route を呼ばず、builtin 固定の A4 ページサイズを即使う
+  //   （builtin は source_format !== 'pdf' のため、認証ありで叩いても同じ固定値が返る＝等価）。
   useEffect(() => {
+    if (guestMode) {
+      setPageSizes([BUILTIN_SYNTHETIC_A4_PAGE])
+      return
+    }
     let cancelled = false
     async function loadPageSizes() {
       try {
@@ -338,7 +396,7 @@ export function AdjustView({
     return () => {
       cancelled = true
     }
-  }, [templateId])
+  }, [templateId, guestMode])
 
   // dirty = エディタ部（hook）+ タイトル / 開催日（本体）の boolean OR。
   // metaDirty は文字列比較 2 回なので hot path 化しない（useMemo すら不要）。
@@ -465,7 +523,24 @@ export function AdjustView({
     }
   }
 
+  /** guestMode 保存ボタンが onGuestSave へ渡す draft を組み立てる。DB へは一切触れない。 */
+  function buildGuestDraft(): GuestMinuteDraft {
+    const payload = editor.buildSavePayload()
+    return {
+      templateId,
+      title: title.trim(),
+      meetingDate,
+      content: payload.content,
+      overrides: payload.overrides,
+      newFields: payload.newFields,
+    }
+  }
+
   async function onSave() {
+    if (guestMode) {
+      onGuestSave?.(buildGuestDraft())
+      return
+    }
     setSaving(true)
     setErrorMsg(null)
     const result = await persistMinute()
@@ -482,8 +557,19 @@ export function AdjustView({
     setSaving(false)
   }
 
-  /** モーダル「保存して移動」: 同じ persistMinute() を呼び、結果をモーダル内 error に振り分け。 */
+  /**
+   * モーダル「保存して移動」。
+   * guestMode: persistMinute は UNAUTHENTICATED で必ず失敗するため onSave と同じ分岐で
+   *   onGuestSave に差し替える。form-cache 退避 + /login 遷移は呼出側（GuestAdjustBootstrap）の
+   *   責務なので、ここではモーダルを閉じるだけでよい。
+   * 通常: 同じ persistMinute() を呼び、結果をモーダル内 error に振り分け。
+   */
   async function handleLeaveSaveAndBack() {
+    if (guestMode) {
+      setLeaveGuardOpen(false)
+      onGuestSave?.(buildGuestDraft())
+      return
+    }
     setLeaveSaving(true)
     setLeaveSaveError(null)
     const result = await persistMinute()
@@ -497,10 +583,14 @@ export function AdjustView({
     setLeaveSaving(false)
   }
 
-  /** モーダル「保存せず移動」: 未保存を破棄して閲覧画面へ。 */
+  /**
+   * モーダル「保存せず移動」: 未保存を破棄して戻る。
+   * guestMode はゲストが保存済み minute を持たず「閲覧画面」に相当する行き先が無いため、
+   * テンプレ選択画面（/templates・未ログインでもアクセス可）へ戻す。
+   */
   function handleLeaveDiscardAndBack() {
     setLeaveGuardOpen(false)
-    router.push(`/minutes/${minuteId}`)
+    router.push(guestMode ? '/templates' : `/minutes/${minuteId}`)
   }
 
   function labelOf(name: string): string {
@@ -531,14 +621,14 @@ export function AdjustView({
 
   return (
     <div className="space-y-3">
-      {/* 閲覧画面への戻り導線。 */}
+      {/* 閲覧画面への戻り導線。guestMode は保存済み minute を持たないためテンプレ選択画面へ。 */}
       <div className="flex items-center gap-3">
         <Link
-          href={`/minutes/${minuteId}`}
+          href={guestMode ? '/templates' : `/minutes/${minuteId}`}
           onClick={handleBackToViewerClick}
           className="text-sm text-gizirotto-blue-700 hover:underline"
         >
-          ← 閲覧画面に戻る
+          {guestMode ? '← テンプレ選択に戻る' : '← 閲覧画面に戻る'}
         </Link>
       </div>
 
@@ -624,7 +714,7 @@ export function AdjustView({
             disabled={!dirty || saving}
             className="bg-gizirotto-blue-500 hover:bg-gizirotto-blue-700 text-white font-medium px-3 py-2 rounded text-sm disabled:opacity-50"
           >
-            {saving ? '保存中…' : '保存'}
+            {saving ? '保存中…' : guestMode ? 'ログインして保存' : '保存'}
           </button>
         </div>
       </div>
