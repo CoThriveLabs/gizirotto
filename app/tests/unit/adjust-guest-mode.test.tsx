@@ -101,7 +101,7 @@ const PDF_FIELDS: PdfField[] = [makePdfField('attendees', '参加者')]
 
 let fetchCalls: { url: string; body: unknown }[] = []
 
-function guestFetchMock(opts: { formatItemOk?: boolean } = {}) {
+function guestFetchMock(opts: { formatItemOk?: boolean; formatItemDelta?: string } = {}) {
   fetchCalls = []
   globalThis.fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = typeof input === 'string' ? input : input.toString()
@@ -143,11 +143,17 @@ function guestFetchMock(opts: { formatItemOk?: boolean } = {}) {
       if (!ok) {
         return { ok: false, status: 403, body: null, json: async () => ({}) } as unknown as Response
       }
-      // 最小の SSE ストリーム（delta なし・done のみ）でも onFormat の catch 経路（NO_OUTPUT）を
-      // 通す。body を取れないので簡易に空 stream を返す。
+      // 既定は delta 無し（done のみ）→ onFormat の NO_OUTPUT catch へ落ちる。
+      // formatItemDelta 指定時は delta を 1 件流して成功パス（receivedAny=true）を通す。
       const encoder = new TextEncoder()
+      const delta = opts.formatItemDelta
       const stream = new ReadableStream({
         pull(controller) {
+          if (delta !== undefined) {
+            controller.enqueue(
+              encoder.encode(`data: ${JSON.stringify({ type: 'delta', text: delta })}\n\n`),
+            )
+          }
           controller.enqueue(encoder.encode('data: {"type":"done"}\n\n'))
           controller.close()
         },
@@ -416,6 +422,23 @@ describe('AdjustView guestMode — GA5 format-item Turnstile ゲート', () => {
     const formatCall = fetchCalls.find((c) => c.url.includes('/api/minutes/format-item'))!
     const body = formatCall.body as Record<string, unknown>
     expect(Object.prototype.hasOwnProperty.call(body, 'turnstileToken')).toBe(false)
+  })
+
+  it('(l) format-item 成功時、gate.reset が呼ばれる（次回チャレンジ発火・Cloudflare 仕様）', async () => {
+    guestFetchMock({ formatItemOk: true, formatItemDelta: '整形後テキスト' })
+    const gate = makeFakeTurnstileGate('token-1')
+    const { container } = await renderGuestAdjust(vi.fn(), gate)
+    await makeDirty(container)
+
+    await act(async () => {
+      // PC/スマホ両方の Inspector が描画されるため getAllByRole で複数取得し、最初を発火。
+      fireEvent.click(screen.getAllByRole('button', { name: '整形する' })[0])
+      await new Promise((r) => setTimeout(r, 0))
+    })
+
+    await waitFor(() => {
+      expect(gate.reset).toHaveBeenCalled()
+    })
   })
 
   it('format-item が失敗した場合、gate.reset が呼ばれる（次回チャレンジ発火）', async () => {

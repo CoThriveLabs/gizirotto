@@ -236,6 +236,11 @@ export function ChatView({ templateId, templateName, mode, fields, isGuest }: Pr
           // 永続化失敗はサイレント、UX 阻害しない（チャット継続優先）
         }
       }
+      // 成功時: 使い切ったトークンをリセットし、次回送信に備えて新チャレンジを発火する。
+      // Cloudflare Turnstile invisible の仕様上、明示 reset を呼ばないと次のトークンが
+      // 発火されず、2 回目以降の consumeToken() が永久待機になる。enabled=false / widget
+      // 未 mount 時は no-op なのでログインユーザー経路は完全不変。
+      if (isGuest) turnstileGate.reset()
     } catch {
       setErrorMsg('返答の取得に失敗しました。少し時間を置いて再度お試しください。')
       // Turnstile トークンは使い切ったので次回チャレンジを明示発火。
@@ -293,6 +298,8 @@ export function ChatView({ templateId, templateName, mode, fields, isGuest }: Pr
             throw new Error('EXTRACT_FIELDS_FAILED')
           }
           result = (await res.json()) as { values: Record<string, string> }
+          // 成功時: 次回チャレンジ発火（Cloudflare 仕様上明示 reset が必要）。
+          turnstileGate.reset()
         } else {
           result = await extractFieldsFromChat({
             fields,

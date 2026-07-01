@@ -312,6 +312,30 @@ describe('ChatView — GA5 Turnstile ゲート', () => {
     expect(body.turnstileToken).toBe('late-token-abc')
   })
 
+  it('(k) 送信成功後に widget.reset が呼ばれる（次回チャレンジ発火・Cloudflare 仕様）', async () => {
+    turnstileControls.autoToken = false
+    const fetchMock = makeFetchMock() // chat/stream は既定で成功レスポンス
+    global.fetch = fetchMock
+
+    await act(async () => {
+      render(<ChatView {...DEFAULT_PROPS} isGuest />)
+    })
+    await waitFor(() => {
+      expect(turnstileControls.latestOnToken).not.toBeNull()
+    })
+
+    // 1 回目のトークンを配信 → kick-off の fetch が走り、成功して reset が呼ばれる。
+    await act(async () => {
+      turnstileControls.latestOnToken!('token-1')
+    })
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledTimes(1)
+    })
+    await waitFor(() => {
+      expect(turnstileControls.resetMock).toHaveBeenCalled()
+    })
+  })
+
   it('(h) chat/stream が失敗した場合、TurnstileWidget の reset が呼ばれる', async () => {
     // chat/stream を全部 500 で失敗させる
     const fetchMock = vi.fn().mockImplementation(() =>

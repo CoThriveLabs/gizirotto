@@ -482,6 +482,9 @@ export function AdjustView({
         }
       }
       if (!receivedAny) throw new Error('NO_OUTPUT')
+      // 成功時: 次回チャレンジ発火（Cloudflare 仕様上明示 reset が必要）。gate 未指定
+      // （ログインユーザー経路）は no-op なので body への影響は無い。
+      guestTurnstileGate?.reset()
     } catch {
       setErrorMsg('整形に失敗しました。少し時間を置いて再度お試しください。')
     } finally {
