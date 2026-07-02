@@ -88,7 +88,7 @@ import {
   applyBboxFlushUpdates,
   computeBboxCenteredYShift,
   shouldComposeFieldClientSide,
-} from '@/app/(dashboard)/minutes/[id]/adjust/AdjustView'
+} from '@/app/(dashboard)/minutes/[id]/adjust/adjust-view-helpers'
 
 const FONT_SIZE_MIN = 8 // 既存 PdfField.font_size_min と一致（読めるギリギリ）
 const FONT_SIZE_MAX = RANGE_MAX // 上限 18pt

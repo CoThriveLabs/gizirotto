@@ -11,7 +11,7 @@
  *   - 「最後の 1 項目ガード」は呼出側責務（純関数ベースでは fields.length チェックのみ）
  */
 import { describe, it, expect } from 'vitest'
-import type { TemplateFieldDef } from '@/app/(dashboard)/minutes/[id]/adjust/AdjustView'
+import type { TemplateFieldDef } from '@/app/(dashboard)/minutes/[id]/adjust/adjust-view-helpers'
 import type { BboxOverrides } from '@/lib/pdf-output/field-override'
 
 type MinutesEditSnapshot = {

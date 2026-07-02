@@ -13,7 +13,7 @@
  *   - 「項目を追加」snapshot: fields / values / newFieldNames 同時追加（戻るで完全復元）
  */
 import { describe, it, expect } from 'vitest'
-import type { TemplateFieldDef } from '@/app/(dashboard)/minutes/[id]/adjust/AdjustView'
+import type { TemplateFieldDef } from '@/app/(dashboard)/minutes/[id]/adjust/adjust-view-helpers'
 import {
   buildPdfFieldFromDefaults,
   nextClientFieldName,

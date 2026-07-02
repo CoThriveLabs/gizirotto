@@ -4,9 +4,9 @@ import { useEffect, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import {
   AdjustView,
-  type TemplateFieldDef,
   type GuestMinuteDraft,
 } from '@/app/(dashboard)/minutes/[id]/adjust/AdjustView'
+import type { TemplateFieldDef } from '@/app/(dashboard)/minutes/[id]/adjust/adjust-view-helpers'
 import type { PdfField } from '@/lib/ai/schemas/pdf-field-schema'
 import type { BboxOverrides } from '@/lib/pdf-output/field-override'
 import {

@@ -29,7 +29,7 @@
  * 不変: 既存 resolveWhiteoutRawImageUrl の挙動は不変。
  */
 import { describe, it, expect } from 'vitest'
-import { shouldComposeFieldClientSide } from '@/app/(dashboard)/minutes/[id]/adjust/AdjustView'
+import { shouldComposeFieldClientSide } from '@/app/(dashboard)/minutes/[id]/adjust/adjust-view-helpers'
 
 /**
  * テストヘルパ: AdjustView 側の hasAnyOverride 経路を再現する。

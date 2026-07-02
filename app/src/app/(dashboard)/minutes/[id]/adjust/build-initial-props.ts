@@ -1,6 +1,6 @@
 import 'server-only'
 
-import type { TemplateFieldDef } from './AdjustView'
+import type { TemplateFieldDef } from './adjust-view-helpers'
 import type { PdfField } from '@/lib/ai/schemas/pdf-field-schema'
 import { PdfFieldSchemaZ } from '@/lib/ai/schemas/pdf-field-schema'
 import {

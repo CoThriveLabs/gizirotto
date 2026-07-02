@@ -63,7 +63,7 @@ vi.mock('@/app/(dashboard)/minutes/[id]/adjust/AdjustView', () => ({
 }))
 
 import { GuestAdjustBootstrap } from '@/app/(public-flow)/minutes/new/adjust/GuestAdjustBootstrap'
-import type { TemplateFieldDef } from '@/app/(dashboard)/minutes/[id]/adjust/AdjustView'
+import type { TemplateFieldDef } from '@/app/(dashboard)/minutes/[id]/adjust/adjust-view-helpers'
 
 const TID = '00000000-0000-0000-0000-000000000001'
 const FIELDS: TemplateFieldDef[] = [
