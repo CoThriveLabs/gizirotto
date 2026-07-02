@@ -6,8 +6,13 @@
 import React from 'react'
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, fireEvent, act, waitFor, cleanup } from '@testing-library/react'
-import { makeFormCacheKey } from '@/lib/utils/form-cache'
-import { GUEST_ADJUST_DRAFT_RESTORE_PATH } from '@/lib/utils/guest-adjust-draft'
+import { makeFormCacheKey, writeFormCache } from '@/lib/utils/form-cache'
+import {
+  guestAdjustDraftFormId,
+  GUEST_ADJUST_DRAFT_RESTORE_PATH,
+} from '@/lib/utils/guest-adjust-draft'
+import type { GuestMinuteDraft } from '@/app/(dashboard)/minutes/[id]/adjust/AdjustView'
+import type { PdfField } from '@/lib/ai/schemas/pdf-field-schema'
 
 const pushMock = vi.fn()
 vi.mock('next/navigation', () => ({
@@ -18,6 +23,9 @@ type CapturedProps = {
   initialValues: Record<string, string>
   initialTitle: string
   initialMeetingDate: string
+  fields: Array<{ name: string; label: string }>
+  pdfFields: Array<{ name: string; label: string }>
+  initialOverrides: Record<string, unknown>
   guestMode?: boolean
   renderImageEndpoint?: string
   onGuestSave?: (draft: unknown) => void
@@ -250,5 +258,204 @@ describe('GuestAdjustBootstrap', () => {
     expect(lastProps?.initialValues.attendees).not.toBe('2026-07-15')
     // meeting_date というキー自体が initialValues に紛れ込んでもいない（fields に無いので無視される）。
     expect(Object.keys(lastProps?.initialValues ?? {})).not.toContain('meeting_date')
+  })
+})
+
+function makeNewField(name: string, label: string): PdfField {
+  return {
+    name,
+    label,
+    type: 'text',
+    bbox: { page: 1, x: 10, y: 10, w: 100, h: 20 },
+    max_chars: 200,
+    font: { family: 'NotoSansJP', size: 11 },
+    padding: { left: 4, top: 4, right: 4, bottom: 4 },
+    multiline: false,
+    align: 'left',
+    vertical: 'top',
+    writing_mode: 'horizontal',
+    overflow_strategy: 'shrink_then_wrap',
+    font_size_min: 8,
+  }
+}
+
+function makeSaveDraft(overrides: Partial<GuestMinuteDraft> = {}): GuestMinuteDraft {
+  return {
+    templateId: TID,
+    title: 'ゲストが入れたタイトル',
+    meetingDate: '2026-08-01',
+    content: { attendees: '田中さん', agenda: '来月の予定' },
+    overrides: { attendees: { x: 5, y: 5 } },
+    ...overrides,
+  }
+}
+
+/** save-draft を form-cache（sessionStorage）へ直接書き込むテスト用ヘルパ。 */
+function writeSaveDraft(draft: GuestMinuteDraft, now?: number) {
+  writeFormCache(
+    sessionStorage,
+    guestAdjustDraftFormId(TID),
+    draft,
+    GUEST_ADJUST_DRAFT_RESTORE_PATH,
+    now,
+  )
+}
+
+describe('GuestAdjustBootstrap — GA7 save-draft 復元（優先: save-draft > chat-draft > 空）', () => {
+  it('(m) save-draft 存在時、AdjustView へ initialTitle/initialMeetingDate/initialValues/initialOverrides が save-draft 内容で渡る', async () => {
+    writeSaveDraft(makeSaveDraft())
+    render(
+      <GuestAdjustBootstrap
+        templateId={TID}
+        templateName="家族会議"
+        fields={FIELDS}
+        pdfFields={[]}
+        initialOverrides={{}}
+        initialValues={{ attendees: '', agenda: '' }}
+      />,
+    )
+    await waitFor(() => {
+      expect(screen.getByTestId('adjust-view-mock')).toBeTruthy()
+    })
+    expect(lastProps?.initialTitle).toBe('ゲストが入れたタイトル')
+    expect(lastProps?.initialMeetingDate).toBe('2026-08-01')
+    expect(lastProps?.initialValues).toEqual({ attendees: '田中さん', agenda: '来月の予定' })
+    expect(lastProps?.initialOverrides).toEqual({ attendees: { x: 5, y: 5 } })
+  })
+
+  it('(n) save-draft 読み取り後も sessionStorage から削除されていない（消費しない・読み取り専用）', async () => {
+    writeSaveDraft(makeSaveDraft())
+    render(
+      <GuestAdjustBootstrap
+        templateId={TID}
+        templateName="家族会議"
+        fields={FIELDS}
+        pdfFields={[]}
+        initialOverrides={{}}
+        initialValues={{ attendees: '', agenda: '' }}
+      />,
+    )
+    await waitFor(() => {
+      expect(lastProps?.initialTitle).toBe('ゲストが入れたタイトル')
+    })
+    // GuestAdjustBootstrap は読み取り専用。消費（clearFormCache）は行わない。
+    const raw = sessionStorage.getItem(makeFormCacheKey(guestAdjustDraftFormId(TID)))
+    expect(raw).not.toBeNull()
+    const stored = JSON.parse(raw!) as { values: GuestMinuteDraft }
+    expect(stored.values.title).toBe('ゲストが入れたタイトル')
+  })
+
+  it('(o) save-draft に newFields がある場合、fields/pdfFields にマージされて渡る', async () => {
+    const newField = makeNewField('custom_field_1', 'カスタム項目')
+    writeSaveDraft(makeSaveDraft({ newFields: [newField] }))
+    render(
+      <GuestAdjustBootstrap
+        templateId={TID}
+        templateName="家族会議"
+        fields={FIELDS}
+        pdfFields={[]}
+        initialOverrides={{}}
+        initialValues={{ attendees: '', agenda: '' }}
+      />,
+    )
+    await waitFor(() => {
+      expect(lastProps?.initialTitle).toBe('ゲストが入れたタイトル')
+    })
+    // pdfFields には元の（空）+ newFields がマージされている。
+    expect(lastProps?.pdfFields.some((f) => f.name === 'custom_field_1')).toBe(true)
+    // fields（TemplateFieldDef[]）側にも同名で反映されている。
+    expect(lastProps?.fields.some((f) => f.name === 'custom_field_1' && f.label === 'カスタム項目')).toBe(
+      true,
+    )
+  })
+
+  it('(p) save-draft と chat-draft 両方存在時、save-draft が優先される', async () => {
+    writeSaveDraft(makeSaveDraft())
+    sessionStorage.setItem(
+      `minutes:guest-chat-draft:${TID}`,
+      JSON.stringify({ attendees: 'chat由来（無視されるはず）' }),
+    )
+    render(
+      <GuestAdjustBootstrap
+        templateId={TID}
+        templateName="家族会議"
+        fields={FIELDS}
+        pdfFields={[]}
+        initialOverrides={{}}
+        initialValues={{ attendees: '', agenda: '' }}
+      />,
+    )
+    await waitFor(() => {
+      expect(lastProps?.initialTitle).toBe('ゲストが入れたタイトル')
+    })
+    expect(lastProps?.initialValues.attendees).toBe('田中さん')
+    // save-draft 優先時は chat-draft キーは触らない（読んでいないので削除もされない）。
+    expect(sessionStorage.getItem(`minutes:guest-chat-draft:${TID}`)).not.toBeNull()
+  })
+
+  it('(q) save-draft 無・chat-draft のみ、既存動作が変わらない（回帰）', async () => {
+    sessionStorage.setItem(
+      `minutes:guest-chat-draft:${TID}`,
+      JSON.stringify({ attendees: 'AIで抽出した参加者' }),
+    )
+    render(
+      <GuestAdjustBootstrap
+        templateId={TID}
+        templateName="家族会議"
+        fields={FIELDS}
+        pdfFields={[]}
+        initialOverrides={{}}
+        initialValues={{ attendees: '', agenda: '' }}
+      />,
+    )
+    await waitFor(() => {
+      expect(lastProps?.initialValues.attendees).toBe('AIで抽出した参加者')
+    })
+    // chat-draft 経路は従来通り templateName / today がそのまま使われる。
+    expect(lastProps?.initialTitle).toBe('家族会議')
+    expect(sessionStorage.getItem(`minutes:guest-chat-draft:${TID}`)).toBeNull()
+  })
+
+  it('(r) TTL 超過の save-draft は無視され、chat-draft へフォールバックする', async () => {
+    const THIRTY_ONE_MIN_AGO = Date.now() - 31 * 60 * 1000
+    writeSaveDraft(makeSaveDraft(), THIRTY_ONE_MIN_AGO)
+    sessionStorage.setItem(
+      `minutes:guest-chat-draft:${TID}`,
+      JSON.stringify({ attendees: 'chat-draftにフォールバック' }),
+    )
+    render(
+      <GuestAdjustBootstrap
+        templateId={TID}
+        templateName="家族会議"
+        fields={FIELDS}
+        pdfFields={[]}
+        initialOverrides={{}}
+        initialValues={{ attendees: '', agenda: '' }}
+      />,
+    )
+    await waitFor(() => {
+      expect(lastProps?.initialValues.attendees).toBe('chat-draftにフォールバック')
+    })
+    expect(lastProps?.initialTitle).toBe('家族会議')
+  })
+
+  it('(r-2) TTL 超過の save-draft のみ（chat-draft も無い）は空初期値にフォールバックする', async () => {
+    const THIRTY_ONE_MIN_AGO = Date.now() - 31 * 60 * 1000
+    writeSaveDraft(makeSaveDraft(), THIRTY_ONE_MIN_AGO)
+    render(
+      <GuestAdjustBootstrap
+        templateId={TID}
+        templateName="家族会議"
+        fields={FIELDS}
+        pdfFields={[]}
+        initialOverrides={{}}
+        initialValues={{ attendees: '', agenda: '' }}
+      />,
+    )
+    await waitFor(() => {
+      expect(screen.getByTestId('adjust-view-mock')).toBeTruthy()
+    })
+    expect(lastProps?.initialValues).toEqual({ attendees: '', agenda: '' })
+    expect(lastProps?.initialTitle).toBe('家族会議')
   })
 })

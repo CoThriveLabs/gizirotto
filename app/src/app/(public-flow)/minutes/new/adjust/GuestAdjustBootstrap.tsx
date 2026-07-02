@@ -9,11 +9,12 @@ import {
 } from '@/app/(dashboard)/minutes/[id]/adjust/AdjustView'
 import type { PdfField } from '@/lib/ai/schemas/pdf-field-schema'
 import type { BboxOverrides } from '@/lib/pdf-output/field-override'
-import { writeFormCache, getSessionStorageSafe } from '@/lib/utils/form-cache'
+import { writeFormCache, readFormCache, getSessionStorageSafe } from '@/lib/utils/form-cache'
 import {
   guestAdjustDraftFormId,
   GUEST_ADJUST_DRAFT_RESTORE_PATH,
 } from '@/lib/utils/guest-adjust-draft'
+import { mergeTemplateAndNewFields } from '@/lib/pdf-output/merge-template-and-new-fields'
 import { TurnstileWidget } from '@/components/auth/TurnstileWidget'
 import { useGuestTurnstileGate } from '@/hooks/useGuestTurnstileGate'
 
@@ -27,18 +28,28 @@ interface Props {
   fixedTextSizesPt?: number[]
 }
 
+/** save-draft（ログインして保存押下時の退避）の TTL。login/page.tsx との magic-link 往復に十分な 30 分。 */
+const GUEST_SNAPSHOT_TTL_MS = 30 * 60 * 1000
+
+interface ResolvedState {
+  fields: TemplateFieldDef[]
+  pdfFields: PdfField[]
+  initialOverrides: BboxOverrides
+  initialValues: Record<string, string>
+  initialTitle: string
+  initialMeetingDate: string
+}
+
 /**
  * /minutes/new/adjust?template_id={id} のクライアント側ブートストラップ。
  *
- * AdjustView を guestMode で render する薄いラッパー。
- *   - chat 経由（ChatView.onFinalize）が一度きりの sessionStorage キー
- *     `minutes:guest-chat-draft:{templateId}` に AI 抽出済み content を残していれば、
- *     mount 時に 1 回だけ拾って初期値へマージする（読み取り後は即削除）。
- *   - manual 経由は当該キーが無いため、サーバ側で組んだ空の initialValues がそのまま使われる。
- *   - 保存ボタン押下（onGuestSave）は draft を form-cache（sessionStorage）へ退避し /login へ誘導する。
- *     ログイン後の本保存（draft 消費）は別経路の責務。
+ * AdjustView を guestMode で render する薄いラッパー。mount 時に 2 種類の draft を
+ * 優先順位付きで読む（詳細は useEffect 内コメント）:
+ *   1. save-draft（`guestAdjustDraftFormId`・保存ボタン押下時に handleGuestSave が書く最新状態）
+ *   2. chat-draft（`minutes:guest-chat-draft:{templateId}`・chat 経由 AI 抽出済み content）
+ *   3. どちらも無ければサーバ側で組んだ空の initialValues
  *
- * サーバ側 initialValues は SSR と一致させるため空のまま render し、chat draft の有無判定は
+ * サーバ側 initialValues は SSR と一致させるため空のまま render し、draft の有無判定は
  * mount 後の useEffect でのみ行う（hydration mismatch 回避）。
  */
 export function GuestAdjustBootstrap({
@@ -51,21 +62,54 @@ export function GuestAdjustBootstrap({
   fixedTextSizesPt,
 }: Props) {
   const router = useRouter()
-  const [resolvedValues, setResolvedValues] = useState<Record<string, string> | null>(null)
-  const [meetingDate] = useState<string>(() => todayLocal())
+  const [resolved, setResolved] = useState<ResolvedState | null>(null)
   // guest 経路の format-item 呼び出しに Turnstile トークンを乗せる中央ゲート。
   // AdjustView が gate.consumeToken() を await → gate.onToken 到着で resolve される。
   const turnstileGate = useGuestTurnstileGate(true)
 
-  // sessionStorage.getItem → removeItem は非冪等（1 回目で消費してしまう）。React 18 StrictMode の
-  // 二重 mount（mount → cleanup → 再 mount）で 1 回目の実行が chat-draft キーを消してしまうと、
-  // 実際にコミットされる 2 回目の実行では既に空で、AI 抽出済み content が丸ごと失われる。
-  // use-form-cache.ts の restoredRef と同じ single-shot ガードで吸収する。
   const draftConsumedRef = useRef(false)
   useEffect(() => {
     if (draftConsumedRef.current) return
     draftConsumedRef.current = true
 
+    const storage = getSessionStorageSafe()
+
+    // 1. save-draft（保存ボタン押下時の最新状態）を最優先で読む。読み取り専用 — ここで
+    //    消費（clearFormCache）してはいけない。ログイン成功後の ManualBootstrap 側の
+    //    復元・本保存が draft を消費する唯一の場所であり、ここで消してしまうと
+    //    ログイン後に draft が見つからず入力内容が失われる。
+    //    expectedPath は「ログイン後の復元先(/minutes/new/manual)」を示す値で
+    //    GuestAdjustBootstrap 自身のパスとは意味的に別物のため、ここではチェックしない
+    //    （formId が templateId 込みでユニークなため誤読み取りのリスクはない）。
+    const saveDraftEntry = readFormCache<GuestMinuteDraft>(
+      storage,
+      guestAdjustDraftFormId(templateId),
+      GUEST_SNAPSHOT_TTL_MS,
+    )
+    const saveDraft = saveDraftEntry?.values ?? null
+
+    if (saveDraft) {
+      const mergedPdfFields = mergeTemplateAndNewFields(pdfFields, saveDraft.newFields ?? [])
+      const mergedFields: TemplateFieldDef[] = mergedPdfFields.map((pf) => ({
+        name: pf.name,
+        label: pf.label,
+        bbox: { x: pf.bbox.x, y: pf.bbox.y, w: pf.bbox.w, h: pf.bbox.h },
+        multiline: pf.multiline ?? false,
+      }))
+      setResolved({
+        fields: mergedFields,
+        pdfFields: mergedPdfFields,
+        initialOverrides: saveDraft.overrides,
+        initialValues: saveDraft.content,
+        initialTitle: saveDraft.title || templateName,
+        initialMeetingDate: saveDraft.meetingDate || todayLocal(),
+      })
+      return
+    }
+
+    // 2. save-draft が無ければ chat-draft を試す（既存ロジック、変更なし）。
+    //    sessionStorage.getItem → removeItem は非冪等。draftConsumedRef の single-shot
+    //    ガードで StrictMode 二重 mount 由来の消費事故を防ぐ（GA2 既知パターン）。
     let values = initialValues
     try {
       const key = `minutes:guest-chat-draft:${templateId}`
@@ -97,7 +141,14 @@ export function GuestAdjustBootstrap({
     } catch {
       // 壊れた draft は無視し空初期値のまま続行する。
     }
-    setResolvedValues(values)
+    setResolved({
+      fields,
+      pdfFields,
+      initialOverrides,
+      initialValues: values,
+      initialTitle: templateName,
+      initialMeetingDate: todayLocal(),
+    })
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [templateId])
 
@@ -116,7 +167,7 @@ export function GuestAdjustBootstrap({
     router.push(`/login?next=${encodeURIComponent(next)}`)
   }
 
-  if (resolvedValues === null) {
+  if (resolved === null) {
     return (
       <div
         role="status"
@@ -137,12 +188,12 @@ export function GuestAdjustBootstrap({
       <AdjustView
         minuteId="guest"
         templateId={templateId}
-        initialTitle={templateName}
-        initialMeetingDate={meetingDate}
-        fields={fields}
-        pdfFields={pdfFields}
-        initialOverrides={initialOverrides}
-        initialValues={resolvedValues}
+        initialTitle={resolved.initialTitle}
+        initialMeetingDate={resolved.initialMeetingDate}
+        fields={resolved.fields}
+        pdfFields={resolved.pdfFields}
+        initialOverrides={resolved.initialOverrides}
+        initialValues={resolved.initialValues}
         fixedTextSizesPt={fixedTextSizesPt}
         guestMode
         renderImageEndpoint="/api/guest/render-image"

@@ -58,8 +58,10 @@ vi.mock('@/components/auth/TurnstileWidget', () => ({
 vi.mock('@/components/usage/limit-modal', () => ({
   LimitModal: () => null,
 }))
+// GA7: renderWithGizirotto は {node, usedInThisText} を返す形に変わった。
 vi.mock('@/components/chat/renderWithGizirotto', () => ({
-  renderWithGizirotto: (text: string) => text,
+  renderWithGizirotto: (text: string) => ({ node: text, usedInThisText: 0 }),
+  GIZIROTTO_MAX_TOTAL: 2,
 }))
 vi.mock('@/components/GizirottoIcon', () => ({
   GizirottoIcon: () => null,

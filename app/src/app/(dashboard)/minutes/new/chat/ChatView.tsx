@@ -408,6 +408,11 @@ export function ChatView({ templateId, templateName, mode, fields, isGuest }: Pr
 
   const visibleMessages = messages
   const canFinalize = !streaming && messages.some((m) => m.role === 'user')
+  // messages のレンダー直前。会話全体で GIZIROTTO_MAX_TOTAL 個まで、という通し番号を
+  // この render 呼び出し内だけで追跡するローカル変数。useState/useRef 化しない — render の
+  // たびに 0 から数え直しても、同じ messages 配列なら同じ位置が置換対象になり結果は毎回同じ
+  // （副作用を持たない）。
+  let gizirottoUsed = 0
 
   return (
     <div className="flex-1 flex flex-col gap-3 min-h-0">
@@ -439,7 +444,11 @@ export function ChatView({ templateId, templateName, mode, fields, isGuest }: Pr
             >
               {m.role === 'assistant'
                 ? m.content
-                  ? renderWithGizirotto(m.content)
+                  ? (() => {
+                      const result = renderWithGizirotto(m.content, gizirottoUsed)
+                      gizirottoUsed += result.usedInThisText
+                      return result.node
+                    })()
                   : streaming
                     ? <GizirottoIcon size={28} anim="think" />
                     : ''
