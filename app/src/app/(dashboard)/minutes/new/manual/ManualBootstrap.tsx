@@ -7,7 +7,13 @@ import { createMinute, saveMinuteAdjust } from '@/server/minutes'
 import { useToast } from '@/components/toast/toast-context'
 import { LimitModal } from '@/components/usage/limit-modal'
 import { ResourceLimitError } from '@/lib/db-error-mapper'
-import { readFormCache, clearFormCache, getSessionStorageSafe } from '@/lib/utils/form-cache'
+import {
+  readFormCache,
+  clearFormCache,
+  getDraftStorageSafe,
+  sweepExpiredFormCache,
+  GUEST_SNAPSHOT_TTL_MS,
+} from '@/lib/utils/form-cache'
 import {
   guestAdjustDraftFormId,
   GUEST_ADJUST_DRAFT_RESTORE_PATH,
@@ -21,9 +27,6 @@ interface Props {
   /** When true the user is not logged in. createMinute is skipped; redirects to the guest AdjustView entry. */
   isGuest?: boolean
 }
-
-/** TTL for the guest save-draft snapshot (30 min) — long enough for a magic-link login round-trip. */
-const GUEST_SNAPSHOT_TTL_MS = 30 * 60 * 1000
 
 /**
  * /minutes/new/manual?template_id={id} のクライアント側ブートストラップ。
@@ -60,7 +63,10 @@ export function ManualBootstrap({ templateId, templateName, fields, isGuest = fa
 
     // ログイン直前にゲストとして AdjustView で「ログインして保存」した draft があれば復元する。
     // TTL 切れ・別テンプレ・そもそも無い場合は null（既存の空 content フローへフォールバック）。
-    const storage = getSessionStorageSafe()
+    const storage = getDraftStorageSafe()
+    // sweep の閾値は名前空間内の最大 TTL（save-draft の 30 分）で渡す。5 分固定にすると
+    // 30 分 TTL の save-draft がまだ有効なうちに sweep で先に消されてしまう。
+    sweepExpiredFormCache(storage, GUEST_SNAPSHOT_TTL_MS)
     const formId = guestAdjustDraftFormId(templateId)
     const entry = readFormCache<GuestMinuteDraft>(storage, formId, GUEST_SNAPSHOT_TTL_MS)
     const draft =

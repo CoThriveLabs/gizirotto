@@ -6,8 +6,8 @@
  *   - mount 時に snapshot 存在 + expectedPath 不一致 → onRestore 呼ばれない + snapshot 保持
  *   - mount 時に snapshot なし → onRestore 呼ばれない
  *   - StrictMode 二重 mount で onRestore が 1 回のみ
- *   - saveSnapshot 後に sessionStorage に書き込まれる
- *   - clearSnapshot で sessionStorage から削除される
+ *   - saveSnapshot 後に localStorage に書き込まれる
+ *   - clearSnapshot で localStorage から削除される
  *   - TTL 切れの snapshot は復元されない
  */
 import React, { StrictMode } from 'react'
@@ -46,19 +46,19 @@ function TestHarness({
 }
 
 beforeEach(() => {
-  sessionStorage.clear()
+  localStorage.clear()
 })
 
 afterEach(() => {
   cleanup()
-  sessionStorage.clear()
+  localStorage.clear()
 })
 
 describe('useFormCache mount 時の復元動作', () => {
   it('snapshot あり + expectedPath 一致 → onRestore 1 回呼ばれて snapshot 削除', () => {
     const path = window.location.pathname
     writeFormCache<Values>(
-      sessionStorage,
+      localStorage,
       'templates:new',
       { name: 'cached', inputPath: 'B' },
       path,
@@ -69,12 +69,12 @@ describe('useFormCache mount 時の復元動作', () => {
     )
     expect(onRestore).toHaveBeenCalledTimes(1)
     expect(onRestore).toHaveBeenCalledWith({ name: 'cached', inputPath: 'B' })
-    expect(sessionStorage.getItem(makeFormCacheKey('templates:new'))).toBeNull()
+    expect(localStorage.getItem(makeFormCacheKey('templates:new'))).toBeNull()
   })
 
   it('snapshot あり + expectedPath 不一致 → onRestore 呼ばれず snapshot 保持', () => {
     writeFormCache<Values>(
-      sessionStorage,
+      localStorage,
       'templates:new',
       { name: 'cached', inputPath: 'A' },
       '/some/other/path',
@@ -85,7 +85,7 @@ describe('useFormCache mount 時の復元動作', () => {
     )
     expect(onRestore).not.toHaveBeenCalled()
     expect(
-      sessionStorage.getItem(makeFormCacheKey('templates:new')),
+      localStorage.getItem(makeFormCacheKey('templates:new')),
     ).not.toBeNull()
   })
 
@@ -100,7 +100,7 @@ describe('useFormCache mount 時の復元動作', () => {
   it('StrictMode 二重 mount でも onRestore は 1 回のみ', () => {
     const path = window.location.pathname
     writeFormCache<Values>(
-      sessionStorage,
+      localStorage,
       'templates:new',
       { name: 'strict', inputPath: 'A' },
       path,
@@ -118,7 +118,7 @@ describe('useFormCache mount 時の復元動作', () => {
     const path = window.location.pathname
     const stale = Date.now() - FORM_CACHE_DEFAULT_TTL_MS - 1000
     // 古い savedAt を直接埋め込み
-    sessionStorage.setItem(
+    localStorage.setItem(
       makeFormCacheKey('templates:new'),
       JSON.stringify({
         savedAt: stale,
@@ -132,12 +132,12 @@ describe('useFormCache mount 時の復元動作', () => {
     )
     expect(onRestore).not.toHaveBeenCalled()
     // TTL 切れは read 時に自動 removeItem
-    expect(sessionStorage.getItem(makeFormCacheKey('templates:new'))).toBeNull()
+    expect(localStorage.getItem(makeFormCacheKey('templates:new'))).toBeNull()
   })
 })
 
 describe('useFormCache saveSnapshot / clearSnapshot', () => {
-  it('saveSnapshot で sessionStorage に書き込まれる', () => {
+  it('saveSnapshot で localStorage に書き込まれる', () => {
     let api:
       | {
           saveSnapshot: (v: Values) => void
@@ -156,7 +156,7 @@ describe('useFormCache saveSnapshot / clearSnapshot', () => {
     act(() => {
       api!.saveSnapshot({ name: 'saved', inputPath: 'B' })
     })
-    const raw = sessionStorage.getItem(makeFormCacheKey('templates:new'))
+    const raw = localStorage.getItem(makeFormCacheKey('templates:new'))
     expect(raw).not.toBeNull()
     const parsed = JSON.parse(raw!) as {
       values: Values
@@ -166,7 +166,7 @@ describe('useFormCache saveSnapshot / clearSnapshot', () => {
     expect(parsed.expectedPath).toBe(window.location.pathname)
   })
 
-  it('clearSnapshot で sessionStorage から削除される', () => {
+  it('clearSnapshot で localStorage から削除される', () => {
     let api:
       | {
           saveSnapshot: (v: Values) => void
@@ -185,11 +185,11 @@ describe('useFormCache saveSnapshot / clearSnapshot', () => {
       api!.saveSnapshot({ name: 'saved', inputPath: 'A' })
     })
     expect(
-      sessionStorage.getItem(makeFormCacheKey('templates:new')),
+      localStorage.getItem(makeFormCacheKey('templates:new')),
     ).not.toBeNull()
     act(() => {
       api!.clearSnapshot()
     })
-    expect(sessionStorage.getItem(makeFormCacheKey('templates:new'))).toBeNull()
+    expect(localStorage.getItem(makeFormCacheKey('templates:new'))).toBeNull()
   })
 })

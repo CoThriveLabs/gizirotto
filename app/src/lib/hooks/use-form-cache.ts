@@ -4,7 +4,7 @@ import { useEffect, useRef } from 'react'
 import {
   clearFormCache,
   FORM_CACHE_DEFAULT_TTL_MS,
-  getSessionStorageSafe,
+  getDraftStorageSafe,
   readFormCache,
   writeFormCache,
 } from '@/lib/utils/form-cache'
@@ -24,7 +24,7 @@ export interface UseFormCacheReturn<T> {
 }
 
 /**
- * フォーム途中入力の sessionStorage キャッシュ React hook。
+ * フォーム途中入力の localStorage キャッシュ React hook。
  *
  * mount 時:
  *   - snapshot を読み出して expectedPath が現在の pathname と一致すれば onRestore(values) を 1 回呼ぶ
@@ -54,7 +54,7 @@ export function useFormCache<T extends Record<string, unknown>>(
   useEffect(() => {
     if (restoredRef.current) return
     restoredRef.current = true
-    const storage = getSessionStorageSafe()
+    const storage = getDraftStorageSafe()
     if (!storage) return
     const entry = readFormCache<T>(storage, formId, ttlMs)
     if (!entry) return
@@ -68,12 +68,12 @@ export function useFormCache<T extends Record<string, unknown>>(
   }, [formId])
 
   const saveSnapshot = (values: T) => {
-    const storage = getSessionStorageSafe()
+    const storage = getDraftStorageSafe()
     writeFormCache(storage, formId, values, window.location.pathname)
   }
 
   const clearSnapshot = () => {
-    const storage = getSessionStorageSafe()
+    const storage = getDraftStorageSafe()
     clearFormCache(storage, formId)
   }
 

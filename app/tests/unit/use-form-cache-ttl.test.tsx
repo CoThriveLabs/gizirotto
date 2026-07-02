@@ -46,12 +46,12 @@ function ManualHarness({
 }
 
 beforeEach(() => {
-  sessionStorage.clear()
+  localStorage.clear()
 })
 
 afterEach(() => {
   cleanup()
-  sessionStorage.clear()
+  localStorage.clear()
 })
 
 describe('useFormCache — 30 min TTL option (guest flow)', () => {
@@ -66,7 +66,7 @@ describe('useFormCache — 30 min TTL option (guest flow)', () => {
       expectedPath: path,
       values: { messages: [{ role: 'assistant', content: 'こんにちは' }], input: 'テスト' },
     }
-    sessionStorage.setItem(
+    localStorage.setItem(
       makeFormCacheKey(`minutes:new:chat:${tid}`),
       JSON.stringify(entry),
     )
@@ -76,13 +76,13 @@ describe('useFormCache — 30 min TTL option (guest flow)', () => {
     expect(onRestore).toHaveBeenCalledTimes(1)
     expect(onRestore).toHaveBeenCalledWith(entry.values)
     // snapshot is cleared after restore
-    expect(sessionStorage.getItem(makeFormCacheKey(`minutes:new:chat:${tid}`))).toBeNull()
+    expect(localStorage.getItem(makeFormCacheKey(`minutes:new:chat:${tid}`))).toBeNull()
   })
 
   it('30 分超過後は onRestore が呼ばれない', () => {
     const path = window.location.pathname
     const savedAt = Date.now() - GUEST_TTL_MS - 1_000 // 30 min + 1 sec ago
-    sessionStorage.setItem(
+    localStorage.setItem(
       makeFormCacheKey(`minutes:new:chat:${tid}`),
       JSON.stringify({
         savedAt,
@@ -95,14 +95,14 @@ describe('useFormCache — 30 min TTL option (guest flow)', () => {
     render(<ChatHarness templateId={tid} onRestore={onRestore} />)
     expect(onRestore).not.toHaveBeenCalled()
     // expired entry is auto-removed
-    expect(sessionStorage.getItem(makeFormCacheKey(`minutes:new:chat:${tid}`))).toBeNull()
+    expect(localStorage.getItem(makeFormCacheKey(`minutes:new:chat:${tid}`))).toBeNull()
   })
 
   it('minutes:new:manual の snapshot が onRestore で復元される', () => {
     const path = window.location.pathname
     const values: ManualSnapshot = { 議題: 'テスト議題', 決定事項: 'テスト決定' }
     const savedAt = Date.now() - 60_000 // 1 min ago (within 30 min)
-    sessionStorage.setItem(
+    localStorage.setItem(
       makeFormCacheKey(`minutes:new:manual:${tid}`),
       JSON.stringify({ savedAt, expectedPath: path, values }),
     )
@@ -115,7 +115,7 @@ describe('useFormCache — 30 min TTL option (guest flow)', () => {
 
   it('StrictMode 二重 mount でも onRestore は 1 回のみ', () => {
     const path = window.location.pathname
-    sessionStorage.setItem(
+    localStorage.setItem(
       makeFormCacheKey(`minutes:new:chat:${tid}`),
       JSON.stringify({
         savedAt: Date.now(),
@@ -134,7 +134,7 @@ describe('useFormCache — 30 min TTL option (guest flow)', () => {
   })
 
   it('expectedPath 不一致では復元されない', () => {
-    sessionStorage.setItem(
+    localStorage.setItem(
       makeFormCacheKey(`minutes:new:chat:${tid}`),
       JSON.stringify({
         savedAt: Date.now(),
@@ -148,7 +148,7 @@ describe('useFormCache — 30 min TTL option (guest flow)', () => {
     expect(onRestore).not.toHaveBeenCalled()
     // snapshot NOT removed (may be restored when user navigates back to correct path)
     expect(
-      sessionStorage.getItem(makeFormCacheKey(`minutes:new:chat:${tid}`)),
+      localStorage.getItem(makeFormCacheKey(`minutes:new:chat:${tid}`)),
     ).not.toBeNull()
   })
 })

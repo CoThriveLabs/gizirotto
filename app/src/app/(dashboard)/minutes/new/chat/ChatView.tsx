@@ -18,6 +18,11 @@ import { ResourceLimitError } from '@/lib/db-error-mapper'
 import { GizirottoIcon } from '@/components/GizirottoIcon'
 import { renderWithGizirotto } from '@/components/chat/renderWithGizirotto'
 import { useFormCache } from '@/lib/hooks/use-form-cache'
+import { writeFormCache, getDraftStorageSafe, GUEST_SNAPSHOT_TTL_MS } from '@/lib/utils/form-cache'
+import {
+  guestChatDraftFormId,
+  GUEST_CHAT_DRAFT_RESTORE_PATH,
+} from '@/lib/utils/guest-adjust-draft'
 import { TurnstileWidget } from '@/components/auth/TurnstileWidget'
 import { useGuestTurnstileGate } from '@/hooks/useGuestTurnstileGate'
 
@@ -41,8 +46,6 @@ type ChatSnapshot = {
 }
 
 const COMPLETE_TOKEN = '[[CHAT_COMPLETE]]'
-/** TTL for guest form snapshots (30 min) — long enough for magic-link login round-trip */
-const GUEST_SNAPSHOT_TTL_MS = 30 * 60 * 1000
 
 export function ChatView({ templateId, templateName, mode, fields, isGuest }: Props) {
   const router = useRouter()
@@ -67,9 +70,8 @@ export function ChatView({ templateId, templateName, mode, fields, isGuest }: Pr
   const initRan = useRef(false)
   const scrollRef = useRef<HTMLDivElement | null>(null)
 
-  // form-cache: 議事録化成功時に snapshot をクリア（saveSnapshot 経路は GA6 で撤去済み・
-  // 401 AI_LIMIT_GUEST ハンドリング撤去に伴う）。クリア用途のみで残す。onRestore は
-  // 別セッションから戻ってきた時の会話復元用に温存（将来の form-cache 拡張時に活用）。
+  // form-cache: 議事録化成功時に snapshot をクリアする用途のみで使う（saveSnapshot 経路は撤去済み）。
+  // onRestore は別セッションから戻ってきた時の会話復元用に温存（将来の form-cache 拡張時に活用）。
   const formId = `minutes:new:chat:${templateId}`
   const { clearSnapshot } = useFormCache<ChatSnapshot>(formId, {
     ttlMs: GUEST_SNAPSHOT_TTL_MS,
@@ -341,9 +343,9 @@ export function ChatView({ templateId, templateName, mode, fields, isGuest }: Pr
       extractFailed = true
     }
 
-    // sessionStorage 経由の draft 持ち回りを廃止し、ここで createMinute を 1 回実行 →
-    // そのまま AdjustView へ遷移する。
+    // ここで createMinute を 1 回実行し、そのまま AdjustView へ遷移する。
     // 振り分け失敗 warning は sessionStorage に残し、AdjustView 初回マウントで toast 化。
+    // タブ単位で完結する一発通知のため、ここは localStorage 化しない。
     const title = `${templateName} ${new Date().toLocaleDateString('ja-JP')}`
     // 会話で開催日が絶対日付として抽出されていればそれを、無ければ暫定で今日（開催日欄で手動調整可）。
     const extractedMeetingDate =
@@ -360,19 +362,19 @@ export function ChatView({ templateId, templateName, mode, fields, isGuest }: Pr
       sessionStorage.removeItem('minutes:draft-warning')
     }
 
-    // ゲストは minute レコードを持てない。抽出済み content を一度きりの sessionStorage キーで
+    // ゲストは minute レコードを持てない。抽出済み content を一度きりの form-cache エントリで
     // ゲスト向け AdjustView 到達ルートへ渡し、そのまま遷移する（createMinute は呼ばない）。
+    // content と meta（meetingDate）を分離したネスト構造で保存。GuestAdjustBootstrap 側が
+    // { content, meetingDate } 形式で読む。form-cache（TTL 付き）経由にすることで、sweep による
+    // 期限切れ掃除の対象にも入り、無期限に残留しない。writeFormCache は書き込み失敗を内部で
+    // 握り潰すため、ここでの try/catch は不要。
     if (isGuest) {
-      try {
-        // content と meta（meetingDate）を分離したネスト構造で保存。GuestAdjustBootstrap 側が
-        // { content, meetingDate } 形式で読む（release/sync 未リリースにつき後方互換不要）。
-        sessionStorage.setItem(
-          `minutes:guest-chat-draft:${templateId}`,
-          JSON.stringify({ content, meetingDate }),
-        )
-      } catch {
-        // 書き込み失敗は致命でない（AdjustView 側は空初期値にフォールバックする）。
-      }
+      writeFormCache(
+        getDraftStorageSafe(),
+        guestChatDraftFormId(templateId),
+        { content, meetingDate },
+        GUEST_CHAT_DRAFT_RESTORE_PATH,
+      )
       clearSnapshot()
       router.push(`/minutes/new/adjust?template_id=${templateId}`)
       return

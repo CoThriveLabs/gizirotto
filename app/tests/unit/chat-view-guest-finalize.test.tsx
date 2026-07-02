@@ -1,13 +1,31 @@
 /**
  * ChatView — isGuest=true での onFinalize（「議事録にする」）着地先テスト。
  *
- * GA2 でゲスト分岐に createMinute を呼ばないルーティング修正を追加した。
- * extractFieldsFromChat は未認証だと UNAUTHENTICATED で reject される（既存仕様・本ファイルの
- * 対象外）ため、ChatView 側の既存 catch フォールバック（メモ詰め content）を前提に検証する。
+ * ゲスト分岐は createMinute を呼ばない。extractFieldsFromChat は未認証だと UNAUTHENTICATED で
+ * reject される（既存仕様・本ファイルの対象外）ため、ChatView 側の既存 catch フォールバック
+ * （メモ詰め content）を前提に検証する。
+ *
+ * guest-chat-draft は form-cache（localStorage・TTL 付き）経由で書かれるため、生の
+ * localStorage キーではなく makeFormCacheKey(guestChatDraftFormId(...)) 越しに読み、
+ * { savedAt, expectedPath, values } でラップされた形から values を取り出して検証する。
  */
 import React from 'react'
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, cleanup, act, waitFor, screen, fireEvent } from '@testing-library/react'
+import { makeFormCacheKey } from '@/lib/utils/form-cache'
+import { guestChatDraftFormId } from '@/lib/utils/guest-adjust-draft'
+
+function readChatDraftValues(templateId: string): {
+  content: Record<string, string>
+  meetingDate: string
+} {
+  const raw = localStorage.getItem(makeFormCacheKey(guestChatDraftFormId(templateId)))
+  if (!raw) throw new Error('chat-draft not found in localStorage')
+  const entry = JSON.parse(raw) as {
+    values: { content: Record<string, string>; meetingDate: string }
+  }
+  return entry.values
+}
 
 const pushMock = vi.fn()
 vi.mock('next/navigation', () => ({
@@ -163,6 +181,7 @@ beforeEach(() => {
   turnstileControls.autoToken = true
   turnstileControls.latestOnToken = null
   turnstileControls.resetMock.mockReset()
+  localStorage.clear()
   sessionStorage.clear()
   // 非ゲスト経路でも initSession が createChatSession を呼ぶため既定の解決値を用意する
   // （ゲスト経路は crypto.randomUUID() を使うため未使用・無害）。
@@ -172,6 +191,7 @@ beforeEach(() => {
 
 afterEach(() => {
   cleanup()
+  localStorage.clear()
   sessionStorage.clear()
 })
 
@@ -199,7 +219,7 @@ async function sendOneUserMessage(fetchMock: ReturnType<typeof makeFetchMock>) {
 }
 
 describe('ChatView — isGuest=true の onFinalize', () => {
-  it('createMinute を呼ばず、guest-chat-draft を sessionStorage へ残してゲスト adjust ルートへ遷移する', async () => {
+  it('createMinute を呼ばず、guest-chat-draft を localStorage へ残してゲスト adjust ルートへ遷移する', async () => {
     const fetchMock = makeFetchMock()
     global.fetch = fetchMock
     await sendOneUserMessage(fetchMock)
@@ -215,8 +235,9 @@ describe('ChatView — isGuest=true の onFinalize', () => {
       )
     })
     expect(createMinuteMock).not.toHaveBeenCalled()
-    const raw = sessionStorage.getItem(`minutes:guest-chat-draft:${DEFAULT_PROPS.templateId}`)
-    expect(raw).not.toBeNull()
+    expect(
+      localStorage.getItem(makeFormCacheKey(guestChatDraftFormId(DEFAULT_PROPS.templateId))),
+    ).not.toBeNull()
   })
 
   it('draft が見つからない field は含まれず、抽出失敗フォールバックの content がそのまま渡る', async () => {
@@ -232,14 +253,13 @@ describe('ChatView — isGuest=true の onFinalize', () => {
     await waitFor(() => {
       expect(pushMock).toHaveBeenCalled()
     })
-    const raw = sessionStorage.getItem(`minutes:guest-chat-draft:${DEFAULT_PROPS.templateId}`)
-    const parsed = JSON.parse(raw!) as { content: Record<string, string> }
+    const values = readChatDraftValues(DEFAULT_PROPS.templateId)
     // extractFieldsFromChat が reject → 既存 catch フォールバックで fields[0] にメモが入る。
-    expect(typeof parsed.content.agenda).toBe('string')
-    expect(parsed.content.agenda.length).toBeGreaterThan(0)
+    expect(typeof values.content.agenda).toBe('string')
+    expect(values.content.agenda.length).toBeGreaterThan(0)
   })
 
-  it('GA4: /api/minutes/chat/extract-fields を templateId/conversation 付きで呼び、成功時は values がそのまま content になる', async () => {
+  it('/api/minutes/chat/extract-fields を templateId/conversation 付きで呼び、成功時は values がそのまま content になる', async () => {
     const fetchMock = makeFetchMock({ ok: true, values: { agenda: '来月の旅行について話した' } })
     global.fetch = fetchMock
     await sendOneUserMessage(fetchMock)
@@ -268,14 +288,13 @@ describe('ChatView — isGuest=true の onFinalize', () => {
     expect(Array.isArray(body.conversation)).toBe(true)
     expect(typeof body.turnstileToken).toBe('string')
 
-    const raw = sessionStorage.getItem(`minutes:guest-chat-draft:${DEFAULT_PROPS.templateId}`)
-    const parsed = JSON.parse(raw!) as { content: Record<string, string> }
-    expect(parsed.content.agenda).toBe('来月の旅行について話した')
+    const values = readChatDraftValues(DEFAULT_PROPS.templateId)
+    expect(values.content.agenda).toBe('来月の旅行について話した')
     // 振り分け成功時は memo dump 警告を出さない。
     expect(sessionStorage.getItem('minutes:draft-warning')).toBeNull()
   })
 
-  it('GA8: extract が meetingDate を返す → chat-draft が { content, meetingDate } 形式で保存され meetingDate を含む', async () => {
+  it('extract が meetingDate を返す → chat-draft が { content, meetingDate } 形式で保存され meetingDate を含む', async () => {
     const fetchMock = makeFetchMock({
       ok: true,
       values: { agenda: '来月の旅行について話した' },
@@ -291,16 +310,12 @@ describe('ChatView — isGuest=true の onFinalize', () => {
       expect(pushMock).toHaveBeenCalled()
     })
 
-    const raw = sessionStorage.getItem(`minutes:guest-chat-draft:${DEFAULT_PROPS.templateId}`)
-    const parsed = JSON.parse(raw!) as {
-      content: Record<string, string>
-      meetingDate: string
-    }
-    expect(parsed.content.agenda).toBe('来月の旅行について話した')
-    expect(parsed.meetingDate).toBe('2026-08-15')
+    const values = readChatDraftValues(DEFAULT_PROPS.templateId)
+    expect(values.content.agenda).toBe('来月の旅行について話した')
+    expect(values.meetingDate).toBe('2026-08-15')
   })
 
-  it('GA8: extract が meetingDate を返さない → chat-draft の meetingDate は today（YYYY-MM-DD）', async () => {
+  it('extract が meetingDate を返さない → chat-draft の meetingDate は today（YYYY-MM-DD）', async () => {
     const fetchMock = makeFetchMock({ ok: true, values: { agenda: '来月の旅行について話した' } })
     global.fetch = fetchMock
     await sendOneUserMessage(fetchMock)
@@ -312,13 +327,12 @@ describe('ChatView — isGuest=true の onFinalize', () => {
       expect(pushMock).toHaveBeenCalled()
     })
 
-    const raw = sessionStorage.getItem(`minutes:guest-chat-draft:${DEFAULT_PROPS.templateId}`)
-    const parsed = JSON.parse(raw!) as { meetingDate: string }
+    const values = readChatDraftValues(DEFAULT_PROPS.templateId)
     // 未指定時は todayIso フォールバック（YYYY-MM-DD 形式であること）。
-    expect(parsed.meetingDate).toMatch(/^\d{4}-\d{2}-\d{2}$/)
+    expect(values.meetingDate).toMatch(/^\d{4}-\d{2}-\d{2}$/)
   })
 
-  it('GA4: extract-fields が非 200（Turnstile 失敗等）でもクラッシュせず既存 memo dump に落ちる', async () => {
+  it('extract-fields が非 200（Turnstile 失敗等）でもクラッシュせず既存 memo dump に落ちる', async () => {
     const fetchMock = makeFetchMock({ ok: false, status: 403 })
     global.fetch = fetchMock
     await sendOneUserMessage(fetchMock)
@@ -333,8 +347,9 @@ describe('ChatView — isGuest=true の onFinalize', () => {
         `/minutes/new/adjust?template_id=${DEFAULT_PROPS.templateId}`,
       )
     })
-    const raw = sessionStorage.getItem(`minutes:guest-chat-draft:${DEFAULT_PROPS.templateId}`)
-    expect(raw).not.toBeNull()
+    expect(
+      localStorage.getItem(makeFormCacheKey(guestChatDraftFormId(DEFAULT_PROPS.templateId))),
+    ).not.toBeNull()
     expect(sessionStorage.getItem('minutes:draft-warning')).not.toBeNull()
   })
 })
@@ -452,7 +467,7 @@ describe('ChatView — GA6 guest AI daily limit (429)', () => {
     // ログイン誘導（router.push）は呼ばれない（時間経過で自動復帰する意味論）。
     expect(pushMock).not.toHaveBeenCalled()
     // form-cache 保存は行わない（GA6 で撤去）。
-    expect(sessionStorage.getItem(`form-cache:v1:minutes:new:chat:${DEFAULT_PROPS.templateId}`)).toBeNull()
+    expect(localStorage.getItem(`form-cache:v1:minutes:new:chat:${DEFAULT_PROPS.templateId}`)).toBeNull()
   })
 
   it('汎用エラーメッセージが GUEST_AI_DAILY_LIMIT メッセージを上書きしない', async () => {
@@ -516,9 +531,9 @@ describe('ChatView — isGuest=false（既定）の onFinalize は不変', () =>
       expect(createMinuteMock).toHaveBeenCalledTimes(1)
     })
     expect(
-      sessionStorage.getItem(`minutes:guest-chat-draft:${DEFAULT_PROPS.templateId}`),
+      localStorage.getItem(makeFormCacheKey(guestChatDraftFormId(DEFAULT_PROPS.templateId))),
     ).toBeNull()
-    // 回帰確認 (GA5): ログインユーザー経路では body に turnstileToken フィールドが乗らない。
+    // 回帰確認: ログインユーザー経路では body に turnstileToken フィールドが乗らない。
     for (const [, init] of fetchMock.mock.calls) {
       const parsed = JSON.parse((init as RequestInit).body as string)
       expect(Object.prototype.hasOwnProperty.call(parsed, 'turnstileToken')).toBe(false)

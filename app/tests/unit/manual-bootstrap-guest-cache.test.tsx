@@ -1,10 +1,9 @@
 /**
  * ManualBootstrap — isGuest=true 到達時の遷移先 + ログイン後 draft 復元（form-cache 橋渡し）テスト。
  *
- * GA2 でゲスト分岐の入力フォーム（textarea 群）を撤去し、ゲスト向け AdjustView 到達ルート
- * （/minutes/new/adjust）への即時遷移へ置き換えた。GA3 で、ログイン後にこの画面へ戻ってきたとき
- * ゲスト時代の draft（form-cache）を復元して createMinute + saveMinuteAdjust する橋渡しを追加した。
- * 本ファイルはその両方の挙動を検証する。
+ * ゲスト（isGuest=true）はゲスト向け AdjustView 到達ルート（/minutes/new/adjust）へ即時遷移する。
+ * ログイン後にこの画面へ戻ってきたときは、ゲスト時代の draft（form-cache）を復元して
+ * createMinute + saveMinuteAdjust する橋渡しも行う。本ファイルはその両方の挙動を検証する。
  */
 import React from 'react'
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
@@ -46,11 +45,11 @@ beforeEach(() => {
   replaceMock.mockReset()
   createMinuteMock.mockReset()
   saveMinuteAdjustMock.mockReset()
-  sessionStorage.clear()
+  localStorage.clear()
 })
 
 afterEach(() => {
-  sessionStorage.clear()
+  localStorage.clear()
 })
 
 describe('ManualBootstrap — isGuest=true', () => {
@@ -105,7 +104,7 @@ describe('ManualBootstrap — isGuest=false（ログイン後の本保存）', (
     expect(saveMinuteAdjustMock).not.toHaveBeenCalled()
   })
 
-  it('sessionStorage に draft（expectedPath 一致）があれば createMinute に draft の content/title/meetingDate を渡す', async () => {
+  it('localStorage に draft（expectedPath 一致）があれば createMinute に draft の content/title/meetingDate を渡す', async () => {
     const draft: GuestMinuteDraft = {
       templateId: TID,
       title: 'ゲストが入れたタイトル',
@@ -114,7 +113,7 @@ describe('ManualBootstrap — isGuest=false（ログイン後の本保存）', (
       overrides: { 議題: { x: 10, y: 20 } },
     }
     writeFormCache(
-      sessionStorage,
+      localStorage,
       guestAdjustDraftFormId(TID),
       draft,
       GUEST_ADJUST_DRAFT_RESTORE_PATH,
@@ -150,7 +149,7 @@ describe('ManualBootstrap — isGuest=false（ログイン後の本保存）', (
     // 成功後は form-cache キーが消費されている。
     await waitFor(() => {
       expect(
-        sessionStorage.getItem(makeFormCacheKey(guestAdjustDraftFormId(TID))),
+        localStorage.getItem(makeFormCacheKey(guestAdjustDraftFormId(TID))),
       ).toBeNull()
     })
   })
@@ -164,7 +163,7 @@ describe('ManualBootstrap — isGuest=false（ログイン後の本保存）', (
       overrides: {},
     }
     writeFormCache(
-      sessionStorage,
+      localStorage,
       guestAdjustDraftFormId(TID),
       draft,
       GUEST_ADJUST_DRAFT_RESTORE_PATH,
@@ -194,7 +193,7 @@ describe('ManualBootstrap — isGuest=false（ログイン後の本保存）', (
       overrides: {},
     }
     // expectedPath をわざと別ページにして書き込む。
-    writeFormCache(sessionStorage, guestAdjustDraftFormId(TID), draft, '/some/other/path')
+    writeFormCache(localStorage, guestAdjustDraftFormId(TID), draft, '/some/other/path')
     createMinuteMock.mockResolvedValue({ id: 'm-mismatch' })
 
     render(
@@ -225,5 +224,64 @@ describe('ManualBootstrap — isGuest=false（ログイン後の本保存）', (
     await waitFor(() => {
       expect(createMinuteMock).toHaveBeenCalledTimes(1)
     })
+  })
+
+  it('mount 時に 30 分 TTL も超過した form-cache:v1: キーが物理削除される', async () => {
+    createMinuteMock.mockResolvedValue({ id: 'minute-sweep' })
+    const staleKey = makeFormCacheKey('minutes:new:manual:some-other-template')
+    localStorage.setItem(
+      staleKey,
+      JSON.stringify({
+        savedAt: Date.now() - 31 * 60 * 1000,
+        expectedPath: '/somewhere',
+        values: { x: 'y' },
+      }),
+    )
+    render(
+      <ManualBootstrap
+        templateId={TID}
+        templateName="家族会議"
+        fields={['議題', '決定事項']}
+      />,
+    )
+    await waitFor(() => {
+      expect(createMinuteMock).toHaveBeenCalledTimes(1)
+    })
+    expect(localStorage.getItem(staleKey)).toBeNull()
+  })
+
+  it('回帰: 5〜30 分前に保存された save-draft は sweep に消されず読み出し可能なまま残る', async () => {
+    // 旧バグ: sweep が内部で 5 分固定 TTL 判定していたため、30 分 TTL の save-draft が
+    // 5 分経過時点で readFormCache に読まれる前に消されてしまっていた。
+    const draft: GuestMinuteDraft = {
+      templateId: TID,
+      title: 'ゲストが入れたタイトル',
+      meetingDate: '2026-08-01',
+      content: { 議題: '10 分前に保存した内容', 決定事項: '来月また集まる' },
+      overrides: {},
+    }
+    const TEN_MIN_AGO = Date.now() - 10 * 60 * 1000
+    writeFormCache(
+      localStorage,
+      guestAdjustDraftFormId(TID),
+      draft,
+      GUEST_ADJUST_DRAFT_RESTORE_PATH,
+      TEN_MIN_AGO,
+    )
+    createMinuteMock.mockResolvedValue({ id: 'minute-survives-sweep' })
+
+    render(
+      <ManualBootstrap
+        templateId={TID}
+        templateName="家族会議"
+        fields={['議題', '決定事項']}
+      />,
+    )
+
+    await waitFor(() => {
+      expect(createMinuteMock).toHaveBeenCalledTimes(1)
+    })
+    const call = createMinuteMock.mock.calls[0][0]
+    expect(call.content).toEqual({ 議題: '10 分前に保存した内容', 決定事項: '来月また集まる' })
   })
 })
