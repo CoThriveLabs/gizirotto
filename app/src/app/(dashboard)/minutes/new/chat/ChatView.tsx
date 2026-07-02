@@ -25,6 +25,7 @@ import {
 } from '@/lib/utils/guest-adjust-draft'
 import { TurnstileWidget } from '@/components/auth/TurnstileWidget'
 import { useGuestTurnstileGate } from '@/hooks/useGuestTurnstileGate'
+import { parseSseStream } from '@/lib/utils/sse-stream'
 
 export type TemplateField = { name: string; label: string }
 
@@ -183,38 +184,17 @@ export function ChatView({ templateId, templateName, mode, fields, isGuest }: Pr
       // 空の assistant メッセージを追加して逐次更新
       setMessages((prev) => [...prev, { role: 'assistant', content: '' }])
 
-      const reader = res.body.getReader()
-      const decoder = new TextDecoder()
-      let buffer = ''
-      while (true) {
-        const { value, done } = await reader.read()
-        if (done) break
-        buffer += decoder.decode(value, { stream: true })
-        const blocks = buffer.split('\n\n')
-        buffer = blocks.pop() ?? ''
-        for (const block of blocks) {
-          const line = block.startsWith('data: ') ? block.slice(6) : block
-          if (!line.trim()) continue
-          try {
-            const evt = JSON.parse(line)
-            if (evt.type === 'delta' && typeof evt.text === 'string') {
-              assistantText += evt.text
-              setMessages((prev) => {
-                const next = [...prev]
-                next[next.length - 1] = {
-                  role: 'assistant',
-                  content: stripCompleteToken(assistantText),
-                }
-                return next
-              })
-            } else if (evt.type === 'error') {
-              throw new Error(evt.message ?? 'stream_error')
-            }
-          } catch {
-            // 部分受信エラーは次フレームで回復
+      await parseSseStream(res.body, (text) => {
+        assistantText += text
+        setMessages((prev) => {
+          const next = [...prev]
+          next[next.length - 1] = {
+            role: 'assistant',
+            content: stripCompleteToken(assistantText),
           }
-        }
-      }
+          return next
+        })
+      })
 
       // 完了トークン検知 → AI 提案の完了状態に
       const aiComplete = assistantText.includes(COMPLETE_TOKEN)

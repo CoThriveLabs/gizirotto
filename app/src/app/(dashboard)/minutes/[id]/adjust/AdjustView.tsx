@@ -40,6 +40,7 @@ import { useToast } from '@/components/toast/toast-context'
 import { useMinuteAdjustEditor } from '@/hooks/editor/useMinuteAdjustEditor'
 import { UnsavedChangesModal } from '@/components/editor/UnsavedChangesModal'
 import type { UseGuestTurnstileGate } from '@/hooks/useGuestTurnstileGate'
+import { parseSseStream } from '@/lib/utils/sse-stream'
 import {
   resolveWhiteoutRawImageUrl,
   type TemplateFieldDef,
@@ -338,37 +339,16 @@ export function AdjustView({
         guestTurnstileGate?.reset()
         throw new Error('FORMAT_FAILED')
       }
-      const reader = res.body.getReader()
-      const decoder = new TextDecoder()
-      let buffer = ''
       let accumulated = ''
       let receivedAny = false
-      while (true) {
-        const { value, done } = await reader.read()
-        if (done) break
-        buffer += decoder.decode(value, { stream: true })
-        const lines = buffer.split('\n\n')
-        buffer = lines.pop() ?? ''
-        for (const block of lines) {
-          const line = block.startsWith('data: ') ? block.slice(6) : block
-          if (!line.trim()) continue
-          try {
-            const evt = JSON.parse(line)
-            if (evt.type === 'delta' && typeof evt.text === 'string') {
-              if (!receivedAny) {
-                accumulated = ''
-                receivedAny = true
-              }
-              accumulated += evt.text
-              editor.setValues((prev) => ({ ...prev, [name]: accumulated }))
-            } else if (evt.type === 'error') {
-              throw new Error(evt.message ?? 'stream_error')
-            }
-          } catch {
-            // 部分受信のパースエラーは次フレームで回復
-          }
+      await parseSseStream(res.body, (text) => {
+        if (!receivedAny) {
+          accumulated = ''
+          receivedAny = true
         }
-      }
+        accumulated += text
+        editor.setValues((prev) => ({ ...prev, [name]: accumulated }))
+      })
       if (!receivedAny) throw new Error('NO_OUTPUT')
       // 成功時: 次回チャレンジ発火（Cloudflare 仕様上明示 reset が必要）。gate 未指定
       // （ログインユーザー経路）は no-op なので body への影響は無い。
