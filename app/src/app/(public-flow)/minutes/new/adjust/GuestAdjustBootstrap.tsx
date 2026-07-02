@@ -15,6 +15,7 @@ import {
   GUEST_ADJUST_DRAFT_RESTORE_PATH,
 } from '@/lib/utils/guest-adjust-draft'
 import { mergeTemplateAndNewFields } from '@/lib/pdf-output/merge-template-and-new-fields'
+import { normalizeMeetingDate } from '@/lib/ai/prompts/chat-to-fields'
 import { TurnstileWidget } from '@/components/auth/TurnstileWidget'
 import { useGuestTurnstileGate } from '@/hooks/useGuestTurnstileGate'
 
@@ -107,16 +108,22 @@ export function GuestAdjustBootstrap({
       return
     }
 
-    // 2. save-draft が無ければ chat-draft を試す（既存ロジック、変更なし）。
-    //    sessionStorage.getItem → removeItem は非冪等。draftConsumedRef の single-shot
-    //    ガードで StrictMode 二重 mount 由来の消費事故を防ぐ（GA2 既知パターン）。
+    // 2. save-draft が無ければ chat-draft を試す。ChatView が書くネスト構造
+    //    `{ content, meetingDate }` を読む。sessionStorage.getItem → removeItem は非冪等。
+    //    draftConsumedRef の single-shot ガードで StrictMode 二重 mount 由来の消費事故を防ぐ。
     let values = initialValues
+    let chatMeetingDate: string | null = null
     try {
       const key = `minutes:guest-chat-draft:${templateId}`
       const raw = sessionStorage.getItem(key)
       if (raw) {
         sessionStorage.removeItem(key)
-        const parsed = JSON.parse(raw) as Record<string, unknown>
+        const parsed = JSON.parse(raw) as {
+          content?: Record<string, unknown>
+          meetingDate?: unknown
+        }
+        const contentObj =
+          parsed.content && typeof parsed.content === 'object' ? parsed.content : {}
         const fieldNames = new Set(fields.map((f) => f.name))
         const merged = { ...values }
         // ChatView 側の fields[0] fallback（AI 抽出失敗時、meeting_date のような bbox を
@@ -124,7 +131,7 @@ export function GuestAdjustBootstrap({
         // その名前が存在せず、通常のマージでは握りつぶされる。fields に一致する値が 1 つも
         // 無い場合に限り、一致しなかったキーの最初の非空値を fields[0] へ救済する。
         let unmatchedFallbackValue: string | null = null
-        for (const [k, v] of Object.entries(parsed)) {
+        for (const [k, v] of Object.entries(contentObj)) {
           if (typeof v !== 'string') continue
           if (fieldNames.has(k)) {
             merged[k] = v
@@ -137,6 +144,9 @@ export function GuestAdjustBootstrap({
           merged[fields[0].name] = unmatchedFallbackValue
         }
         values = merged
+        // normalizeMeetingDate: YYYY-MM-DD 形式 + 実在日付チェック（chat-to-fields.ts 共有純関数）。
+        // ゲスト route / ログイン Server Action と同一ロジックに統一。
+        chatMeetingDate = normalizeMeetingDate(parsed.meetingDate) ?? null
       }
     } catch {
       // 壊れた draft は無視し空初期値のまま続行する。
@@ -147,7 +157,7 @@ export function GuestAdjustBootstrap({
       initialOverrides,
       initialValues: values,
       initialTitle: templateName,
-      initialMeetingDate: todayLocal(),
+      initialMeetingDate: chatMeetingDate ?? todayLocal(),
     })
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [templateId])

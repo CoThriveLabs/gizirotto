@@ -10,6 +10,7 @@ import {
   SYSTEM_PROMPT_CHAT_TO_FIELDS,
   buildChatToFieldsJsonSchema,
   buildChatToFieldsUserPrompt,
+  normalizeMeetingDate,
 } from '@/lib/ai/prompts/chat-to-fields'
 
 export const runtime = 'nodejs'
@@ -144,7 +145,14 @@ export async function POST(req: NextRequest) {
     const v = (rawValues as Record<string, unknown>)[f.name]
     values[f.name] = typeof v === 'string' ? v : ''
   }
-  return NextResponse.json({ values }, { status: 200 })
+  // 会話で開催日が絶対日付として明示された場合のみ meetingDate を返す（相対表現・不正日付は除外）。
+  const meetingDate = normalizeMeetingDate(
+    (toolUse.input as { meeting_date?: unknown }).meeting_date,
+  )
+  return NextResponse.json(
+    meetingDate !== undefined ? { values, meetingDate } : { values },
+    { status: 200 },
+  )
 }
 
 function jsonError(code: string, status: number, detail?: unknown): NextResponse {

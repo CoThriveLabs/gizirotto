@@ -157,6 +157,78 @@ describe('POST /api/minutes/chat/extract-fields', () => {
     expect((await res.json()).values).toEqual({ attendees: '田中さん、佐藤さん' })
   })
 
+  it('GA8: meeting_date が正 ISO なら meetingDate をレスポンスに含める', async () => {
+    createMock.mockResolvedValue({
+      content: [
+        {
+          type: 'tool_use',
+          name: 'fill_minute_fields',
+          input: { values: { attendees: '田中さん' }, meeting_date: '2026-07-15' },
+        },
+      ],
+    })
+    const res = await POST(
+      makeRequest({ templateId: BUILTIN_ID, conversation: VALID_CONVERSATION }),
+    )
+    expect(res.status).toBe(200)
+    const json = (await res.json()) as { values: Record<string, string>; meetingDate?: string }
+    expect(json.meetingDate).toBe('2026-07-15')
+  })
+
+  it('GA8: meeting_date が相対表現（不正）なら meetingDate を含めない', async () => {
+    createMock.mockResolvedValue({
+      content: [
+        {
+          type: 'tool_use',
+          name: 'fill_minute_fields',
+          input: { values: { attendees: '田中さん' }, meeting_date: '来週' },
+        },
+      ],
+    })
+    const res = await POST(
+      makeRequest({ templateId: BUILTIN_ID, conversation: VALID_CONVERSATION }),
+    )
+    expect(res.status).toBe(200)
+    const json = (await res.json()) as { values: Record<string, string>; meetingDate?: string }
+    expect(json.meetingDate).toBeUndefined()
+  })
+
+  it('GA8: meeting_date が欠落なら meetingDate を含めない', async () => {
+    createMock.mockResolvedValue({
+      content: [
+        {
+          type: 'tool_use',
+          name: 'fill_minute_fields',
+          input: { values: { attendees: '田中さん' } },
+        },
+      ],
+    })
+    const res = await POST(
+      makeRequest({ templateId: BUILTIN_ID, conversation: VALID_CONVERSATION }),
+    )
+    expect(res.status).toBe(200)
+    const json = (await res.json()) as { values: Record<string, string>; meetingDate?: string }
+    expect(json.meetingDate).toBeUndefined()
+  })
+
+  it('GA8: meeting_date が実在しない日付（2026-13-45）なら meetingDate を含めない（堅牢化）', async () => {
+    createMock.mockResolvedValue({
+      content: [
+        {
+          type: 'tool_use',
+          name: 'fill_minute_fields',
+          input: { values: { attendees: '田中さん' }, meeting_date: '2026-13-45' },
+        },
+      ],
+    })
+    const res = await POST(
+      makeRequest({ templateId: BUILTIN_ID, conversation: VALID_CONVERSATION }),
+    )
+    expect(res.status).toBe(200)
+    const json = (await res.json()) as { values: Record<string, string>; meetingDate?: string }
+    expect(json.meetingDate).toBeUndefined()
+  })
+
   it('クライアント送信の fields は無視され、template から再解決した fields だけが使われる（偽装防止）', async () => {
     createMock.mockResolvedValue({
       content: [

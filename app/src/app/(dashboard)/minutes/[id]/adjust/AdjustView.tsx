@@ -265,6 +265,10 @@ export function AdjustView({
   const [rawBgUrl, setRawBgUrl] = useState<string | null>(null)
   const [pageSizes, setPageSizes] = useState<PageMeta[]>([])
   const [saving, setSaving] = useState(false)
+  // ログインユーザーの AdjustView 初回表示時、DB は createMinute 済みで dirty=false だが、
+  // 「一度は能動的に保存を完了できる」UX のため保存ボタンを活性にしておく。初回保存を
+  // 押したら true にし、以降は通常の dirty 連動へ戻す。guestMode では使わない。
+  const [firstSaveConsumed, setFirstSaveConsumed] = useState(false)
   const [errorMsg, setErrorMsg] = useState<string | null>(null)
   // 「閲覧画面に戻る」未保存ガードモーダル (bbox-editor と同型・共通モーダル経由)。
   const [leaveGuardOpen, setLeaveGuardOpen] = useState(false)
@@ -562,6 +566,9 @@ export function AdjustView({
       onGuestSave?.(buildGuestDraft())
       return
     }
+    // 初回保存アクションを消費。保存成功時は router.push で遷移するので、この state が
+    // 非活性へ戻す効果は「保存失敗で画面に留まった稀ケース」に効くガード。
+    setFirstSaveConsumed(true)
     setSaving(true)
     setErrorMsg(null)
     const result = await persistMinute()
@@ -569,6 +576,9 @@ export function AdjustView({
       router.push(`/minutes/${minuteId}`)
       return
     }
+    // 保存失敗時は firstSaveConsumed を戻し、未編集のまま即座に再試行できるようにする
+    // （立てたままだと 1 文字編集かリロードでしか保存ボタンが復帰しない）。
+    setFirstSaveConsumed(false)
     setErrorMsg(result.userMessage)
     // バリデーション失敗（API 未到達）ではトーストを出さず画面エラーのみ。
     // 既存挙動を維持するため API 失敗時のみトースト発火。
@@ -732,7 +742,7 @@ export function AdjustView({
           <button
             type="button"
             onClick={onSave}
-            disabled={!dirty || saving}
+            disabled={saving || (!guestMode && !dirty && firstSaveConsumed)}
             className="bg-gizirotto-blue-500 hover:bg-gizirotto-blue-700 text-white font-medium px-3 py-2 rounded text-sm disabled:opacity-50"
           >
             {saving ? '保存中…' : guestMode ? 'ログインして保存' : '保存'}

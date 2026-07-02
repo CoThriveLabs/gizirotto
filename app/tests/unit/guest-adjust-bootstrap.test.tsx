@@ -99,7 +99,7 @@ describe('GuestAdjustBootstrap', () => {
   it('chat-draft が sessionStorage にあれば初期値へマージされ、キーは消費される', async () => {
     sessionStorage.setItem(
       `minutes:guest-chat-draft:${TID}`,
-      JSON.stringify({ attendees: 'AIで抽出した参加者' }),
+      JSON.stringify({ content: { attendees: 'AIで抽出した参加者' } }),
     )
     render(
       <GuestAdjustBootstrap
@@ -174,7 +174,7 @@ describe('GuestAdjustBootstrap', () => {
   it('React.StrictMode 二重マウントでも chat-draft を正しく反映する（sessionStorage 消費は 1 回のみ）', async () => {
     sessionStorage.setItem(
       `minutes:guest-chat-draft:${TID}`,
-      JSON.stringify({ attendees: 'StrictMode下でも残るはず' }),
+      JSON.stringify({ content: { attendees: 'StrictMode下でも残るはず' } }),
     )
     render(
       <React.StrictMode>
@@ -205,12 +205,14 @@ describe('GuestAdjustBootstrap', () => {
     sessionStorage.setItem(
       `minutes:guest-chat-draft:${TID}`,
       JSON.stringify({
-        meeting_date: '[ユーザー] 家族会議をします\n[AI] 了解しました。まず議題からどうぞ。',
-        attendees: '',
-        agenda: '',
-        decisions: '',
-        todos: '',
-        discussion: '',
+        content: {
+          meeting_date: '[ユーザー] 家族会議をします\n[AI] 了解しました。まず議題からどうぞ。',
+          attendees: '',
+          agenda: '',
+          decisions: '',
+          todos: '',
+          discussion: '',
+        },
       }),
     )
     render(
@@ -235,9 +237,11 @@ describe('GuestAdjustBootstrap', () => {
     sessionStorage.setItem(
       `minutes:guest-chat-draft:${TID}`,
       JSON.stringify({
-        meeting_date: '2026-07-15',
-        attendees: '田中さん、佐藤さん',
-        agenda: '来月の旅行について',
+        content: {
+          meeting_date: '2026-07-15',
+          attendees: '田中さん、佐藤さん',
+          agenda: '来月の旅行について',
+        },
       }),
     )
     render(
@@ -373,7 +377,7 @@ describe('GuestAdjustBootstrap — GA7 save-draft 復元（優先: save-draft > 
     writeSaveDraft(makeSaveDraft())
     sessionStorage.setItem(
       `minutes:guest-chat-draft:${TID}`,
-      JSON.stringify({ attendees: 'chat由来（無視されるはず）' }),
+      JSON.stringify({ content: { attendees: 'chat由来（無視されるはず）' } }),
     )
     render(
       <GuestAdjustBootstrap
@@ -396,7 +400,7 @@ describe('GuestAdjustBootstrap — GA7 save-draft 復元（優先: save-draft > 
   it('(q) save-draft 無・chat-draft のみ、既存動作が変わらない（回帰）', async () => {
     sessionStorage.setItem(
       `minutes:guest-chat-draft:${TID}`,
-      JSON.stringify({ attendees: 'AIで抽出した参加者' }),
+      JSON.stringify({ content: { attendees: 'AIで抽出した参加者' } }),
     )
     render(
       <GuestAdjustBootstrap
@@ -421,7 +425,7 @@ describe('GuestAdjustBootstrap — GA7 save-draft 復元（優先: save-draft > 
     writeSaveDraft(makeSaveDraft(), THIRTY_ONE_MIN_AGO)
     sessionStorage.setItem(
       `minutes:guest-chat-draft:${TID}`,
-      JSON.stringify({ attendees: 'chat-draftにフォールバック' }),
+      JSON.stringify({ content: { attendees: 'chat-draftにフォールバック' } }),
     )
     render(
       <GuestAdjustBootstrap
@@ -457,5 +461,98 @@ describe('GuestAdjustBootstrap — GA7 save-draft 復元（優先: save-draft > 
     })
     expect(lastProps?.initialValues).toEqual({ attendees: '', agenda: '' })
     expect(lastProps?.initialTitle).toBe('家族会議')
+  })
+})
+
+describe('GuestAdjustBootstrap — GA8 chat-draft ネスト構造 + meetingDate', () => {
+  it('chat-draft（ネスト形式）に meetingDate があれば AdjustView の initialMeetingDate に渡る', async () => {
+    sessionStorage.setItem(
+      `minutes:guest-chat-draft:${TID}`,
+      JSON.stringify({
+        content: { attendees: 'AIで抽出した参加者' },
+        meetingDate: '2026-08-15',
+      }),
+    )
+    render(
+      <GuestAdjustBootstrap
+        templateId={TID}
+        templateName="家族会議"
+        fields={FIELDS}
+        pdfFields={[]}
+        initialOverrides={{}}
+        initialValues={{ attendees: '', agenda: '' }}
+      />,
+    )
+    await waitFor(() => {
+      expect(lastProps?.initialValues.attendees).toBe('AIで抽出した参加者')
+    })
+    expect(lastProps?.initialMeetingDate).toBe('2026-08-15')
+  })
+
+  it('chat-draft の meetingDate が無ければ initialMeetingDate は today（YYYY-MM-DD 形式）にフォールバック', async () => {
+    sessionStorage.setItem(
+      `minutes:guest-chat-draft:${TID}`,
+      JSON.stringify({ content: { attendees: 'メモ' } }),
+    )
+    render(
+      <GuestAdjustBootstrap
+        templateId={TID}
+        templateName="家族会議"
+        fields={FIELDS}
+        pdfFields={[]}
+        initialOverrides={{}}
+        initialValues={{ attendees: '', agenda: '' }}
+      />,
+    )
+    await waitFor(() => {
+      expect(lastProps?.initialValues.attendees).toBe('メモ')
+    })
+    expect(lastProps?.initialMeetingDate).toMatch(/^\d{4}-\d{2}-\d{2}$/)
+  })
+
+  it('chat-draft の meetingDate が不正形式なら today にフォールバック', async () => {
+    sessionStorage.setItem(
+      `minutes:guest-chat-draft:${TID}`,
+      JSON.stringify({ content: { attendees: 'メモ' }, meetingDate: '来週' }),
+    )
+    render(
+      <GuestAdjustBootstrap
+        templateId={TID}
+        templateName="家族会議"
+        fields={FIELDS}
+        pdfFields={[]}
+        initialOverrides={{}}
+        initialValues={{ attendees: '', agenda: '' }}
+      />,
+    )
+    await waitFor(() => {
+      expect(lastProps?.initialValues.attendees).toBe('メモ')
+    })
+    // '来週' は YYYY-MM-DD にマッチしないので today にフォールバック。
+    expect(lastProps?.initialMeetingDate).not.toBe('来週')
+    expect(lastProps?.initialMeetingDate).toMatch(/^\d{4}-\d{2}-\d{2}$/)
+  })
+
+  it('chat-draft の meetingDate が形式は正しいが実在しない日付（2026-13-45）なら today にフォールバック（normalizeMeetingDate 統一・GA8-Patch1）', async () => {
+    sessionStorage.setItem(
+      `minutes:guest-chat-draft:${TID}`,
+      JSON.stringify({ content: { attendees: 'メモ' }, meetingDate: '2026-13-45' }),
+    )
+    render(
+      <GuestAdjustBootstrap
+        templateId={TID}
+        templateName="家族会議"
+        fields={FIELDS}
+        pdfFields={[]}
+        initialOverrides={{}}
+        initialValues={{ attendees: '', agenda: '' }}
+      />,
+    )
+    await waitFor(() => {
+      expect(lastProps?.initialValues.attendees).toBe('メモ')
+    })
+    // 正規表現は通過するが実在しない日付なので normalizeMeetingDate が弾き today にフォールバック。
+    expect(lastProps?.initialMeetingDate).not.toBe('2026-13-45')
+    expect(lastProps?.initialMeetingDate).toMatch(/^\d{4}-\d{2}-\d{2}$/)
   })
 })

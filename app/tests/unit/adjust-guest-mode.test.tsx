@@ -276,6 +276,29 @@ describe('AdjustView guestMode — 保存ボタン', () => {
     expect(screen.getByRole('button', { name: 'ログインして保存' })).toBeTruthy()
   })
 
+  it('guestMode は dirty=false（未編集）でも保存ボタンが常時活性', async () => {
+    await renderGuestAdjust()
+    // 何も編集せず初期表示のまま。guestMode は dirty 非依存で活性。
+    const saveBtn = screen.getByRole('button', { name: 'ログインして保存' })
+    expect(saveBtn).not.toBeDisabled()
+  })
+
+  it('guestMode は未編集のまま押下しても onGuestSave が呼ばれる', async () => {
+    const onGuestSave = vi.fn()
+    await renderGuestAdjust(onGuestSave)
+    const saveBtn = screen.getByRole('button', { name: 'ログインして保存' })
+    await act(async () => {
+      fireEvent.click(saveBtn)
+      await Promise.resolve()
+    })
+    await waitFor(() => {
+      expect(onGuestSave).toHaveBeenCalledTimes(1)
+    })
+    // DB 書き込み・画面遷移は起きない。
+    expect(saveMinuteAdjustSpy).not.toHaveBeenCalled()
+    expect(routerPushSpy).not.toHaveBeenCalled()
+  })
+
   it('押下で onGuestSave が draft を引数に呼ばれ、DB 書き込み / 画面遷移は一切起きない', async () => {
     const onGuestSave = vi.fn()
     const { container } = await renderGuestAdjust(onGuestSave)
@@ -456,5 +479,82 @@ describe('AdjustView guestMode — GA5 format-item Turnstile ゲート', () => {
     await waitFor(() => {
       expect(gate.reset).toHaveBeenCalled()
     })
+  })
+})
+
+describe('AdjustView ログインユーザー — 保存ボタン初回活性（firstSaveConsumed）', () => {
+  it('初回表示（未編集・firstSaveConsumed=false）は保存ボタンが活性', async () => {
+    await renderAuthedAdjust()
+    // ログイン版のラベルは「保存」。dirty=false でも初回は活性。
+    const saveBtn = screen.getByRole('button', { name: '保存' })
+    expect(saveBtn).not.toBeDisabled()
+  })
+
+  it('保存ボタン押下後（保存失敗で画面に留まる）、未編集でも再活性化し即座に再試行できる', async () => {
+    // saveMinuteAdjust を reject させ、persistMinute を ok:false にして画面に留めさせる。
+    saveMinuteAdjustSpy.mockRejectedValueOnce(new Error('SAVE_FAILED'))
+    await renderAuthedAdjust()
+
+    const saveBtn = screen.getByRole('button', { name: '保存' })
+    expect(saveBtn).not.toBeDisabled()
+
+    await act(async () => {
+      fireEvent.click(saveBtn)
+      await Promise.resolve()
+    })
+
+    // 保存失敗後も firstSaveConsumed が false に戻るため、未編集のまま活性を維持する
+    // （編集やリロードをしなくても即座に再試行できる）。
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: '保存' })).not.toBeDisabled()
+    })
+    expect(saveMinuteAdjustSpy).toHaveBeenCalledTimes(1)
+    expect(routerPushSpy).not.toHaveBeenCalled()
+  })
+
+  it('回帰: 1 文字編集すると dirty=true で活性のまま（保存成功で画面遷移する正常系）', async () => {
+    saveMinuteAdjustSpy.mockResolvedValueOnce({ ok: true })
+    const { container } = await renderAuthedAdjust()
+
+    // 1 文字編集で dirty=true → 活性のまま。
+    await makeDirty(container)
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: '保存' })).not.toBeDisabled()
+    })
+
+    // 保存成功 → router.push で遷移する（既存挙動不変）。
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: '保存' }))
+      await Promise.resolve()
+    })
+    await waitFor(() => {
+      expect(routerPushSpy).toHaveBeenCalledWith('/minutes/m-1')
+    })
+  })
+
+  it('保存失敗を 2 回連続しても、都度 firstSaveConsumed が戻り再試行できる', async () => {
+    saveMinuteAdjustSpy.mockRejectedValueOnce(new Error('SAVE_FAILED_1'))
+    saveMinuteAdjustSpy.mockRejectedValueOnce(new Error('SAVE_FAILED_2'))
+    await renderAuthedAdjust()
+
+    const saveBtn = screen.getByRole('button', { name: '保存' })
+    await act(async () => {
+      fireEvent.click(saveBtn)
+      await Promise.resolve()
+    })
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: '保存' })).not.toBeDisabled()
+    })
+
+    // 2 回目も未編集のまま即座に再試行できる。
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: '保存' }))
+      await Promise.resolve()
+    })
+    await waitFor(() => {
+      expect(saveMinuteAdjustSpy).toHaveBeenCalledTimes(2)
+    })
+    expect(screen.getByRole('button', { name: '保存' })).not.toBeDisabled()
+    expect(routerPushSpy).not.toHaveBeenCalled()
   })
 })

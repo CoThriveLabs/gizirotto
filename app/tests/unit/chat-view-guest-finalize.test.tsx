@@ -100,7 +100,12 @@ function makeSseStream(events: string[] = ['data: {"type":"done"}\n\n']): Readab
  * （GA6 の GUEST_AI_DAILY_LIMIT テスト用）。
  */
 function makeFetchMock(
-  extractFieldsResult: { ok: boolean; status?: number; values?: Record<string, string> } = {
+  extractFieldsResult: {
+    ok: boolean
+    status?: number
+    values?: Record<string, string>
+    meetingDate?: string
+  } = {
     ok: false,
     status: 429,
   },
@@ -108,10 +113,15 @@ function makeFetchMock(
 ) {
   return vi.fn().mockImplementation((url: unknown) => {
     if (typeof url === 'string' && url.includes('/api/minutes/chat/extract-fields')) {
+      const jsonBody: Record<string, unknown> = { values: extractFieldsResult.values ?? {} }
+      // GA8: meetingDate が指定されていればレスポンス JSON に含める（route の実挙動を模倣）。
+      if (extractFieldsResult.meetingDate !== undefined) {
+        jsonBody.meetingDate = extractFieldsResult.meetingDate
+      }
       return Promise.resolve({
         ok: extractFieldsResult.ok,
         status: extractFieldsResult.status ?? (extractFieldsResult.ok ? 200 : 429),
-        json: vi.fn().mockResolvedValue({ values: extractFieldsResult.values ?? {} }),
+        json: vi.fn().mockResolvedValue(jsonBody),
       })
     }
     // chat/stream 応答をテスト側で差し替え可能に。既定は 200 + SSE ストリーム。
@@ -223,10 +233,10 @@ describe('ChatView — isGuest=true の onFinalize', () => {
       expect(pushMock).toHaveBeenCalled()
     })
     const raw = sessionStorage.getItem(`minutes:guest-chat-draft:${DEFAULT_PROPS.templateId}`)
-    const content = JSON.parse(raw!) as Record<string, string>
+    const parsed = JSON.parse(raw!) as { content: Record<string, string> }
     // extractFieldsFromChat が reject → 既存 catch フォールバックで fields[0] にメモが入る。
-    expect(typeof content.agenda).toBe('string')
-    expect(content.agenda.length).toBeGreaterThan(0)
+    expect(typeof parsed.content.agenda).toBe('string')
+    expect(parsed.content.agenda.length).toBeGreaterThan(0)
   })
 
   it('GA4: /api/minutes/chat/extract-fields を templateId/conversation 付きで呼び、成功時は values がそのまま content になる', async () => {
@@ -259,10 +269,53 @@ describe('ChatView — isGuest=true の onFinalize', () => {
     expect(typeof body.turnstileToken).toBe('string')
 
     const raw = sessionStorage.getItem(`minutes:guest-chat-draft:${DEFAULT_PROPS.templateId}`)
-    const content = JSON.parse(raw!) as Record<string, string>
-    expect(content.agenda).toBe('来月の旅行について話した')
+    const parsed = JSON.parse(raw!) as { content: Record<string, string> }
+    expect(parsed.content.agenda).toBe('来月の旅行について話した')
     // 振り分け成功時は memo dump 警告を出さない。
     expect(sessionStorage.getItem('minutes:draft-warning')).toBeNull()
+  })
+
+  it('GA8: extract が meetingDate を返す → chat-draft が { content, meetingDate } 形式で保存され meetingDate を含む', async () => {
+    const fetchMock = makeFetchMock({
+      ok: true,
+      values: { agenda: '来月の旅行について話した' },
+      meetingDate: '2026-08-15',
+    })
+    global.fetch = fetchMock
+    await sendOneUserMessage(fetchMock)
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: '議事録にする' }))
+    })
+    await waitFor(() => {
+      expect(pushMock).toHaveBeenCalled()
+    })
+
+    const raw = sessionStorage.getItem(`minutes:guest-chat-draft:${DEFAULT_PROPS.templateId}`)
+    const parsed = JSON.parse(raw!) as {
+      content: Record<string, string>
+      meetingDate: string
+    }
+    expect(parsed.content.agenda).toBe('来月の旅行について話した')
+    expect(parsed.meetingDate).toBe('2026-08-15')
+  })
+
+  it('GA8: extract が meetingDate を返さない → chat-draft の meetingDate は today（YYYY-MM-DD）', async () => {
+    const fetchMock = makeFetchMock({ ok: true, values: { agenda: '来月の旅行について話した' } })
+    global.fetch = fetchMock
+    await sendOneUserMessage(fetchMock)
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: '議事録にする' }))
+    })
+    await waitFor(() => {
+      expect(pushMock).toHaveBeenCalled()
+    })
+
+    const raw = sessionStorage.getItem(`minutes:guest-chat-draft:${DEFAULT_PROPS.templateId}`)
+    const parsed = JSON.parse(raw!) as { meetingDate: string }
+    // 未指定時は todayIso フォールバック（YYYY-MM-DD 形式であること）。
+    expect(parsed.meetingDate).toMatch(/^\d{4}-\d{2}-\d{2}$/)
   })
 
   it('GA4: extract-fields が非 200（Turnstile 失敗等）でもクラッシュせず既存 memo dump に落ちる', async () => {

@@ -268,6 +268,9 @@ export function ChatView({ templateId, templateName, mode, fields, isGuest }: Pr
     // 失敗時 fallback = 最初の field に memo 詰め + 確認画面に警告表示。
     let content: Record<string, string>
     let extractFailed = false
+    // result は try 内で代入され、meetingDate 確定（下方）は try の外。extractFailed 時は
+    // undefined になり得るので上位スコープで宣言し result?.meetingDate の optional chain で扱う。
+    let result: { values: Record<string, string>; meetingDate?: string } | undefined
     const memo = messages
       .map((m) => `[${m.role === 'user' ? 'ユーザー' : 'AI'}] ${m.content}`)
       .join('\n')
@@ -282,7 +285,6 @@ export function ChatView({ templateId, templateName, mode, fields, isGuest }: Pr
         // `if (!user) throw` に必ず引っかかるため、代わりにゲスト専用 route を叩く。
         // Turnstile トークンは gate.consumeToken() で到着待ち（enabled=false 時は undefined）。
         // 直前の送信で消費済みなら waiter で新チャレンジ到着まで待機する。
-        let result: { values: Record<string, string> }
         if (isGuest) {
           const capturedToken = await turnstileGate.consumeToken()
           const res = await fetch('/api/minutes/chat/extract-fields', {
@@ -299,7 +301,10 @@ export function ChatView({ templateId, templateName, mode, fields, isGuest }: Pr
             turnstileGate.reset()
             throw new Error('EXTRACT_FIELDS_FAILED')
           }
-          result = (await res.json()) as { values: Record<string, string> }
+          result = (await res.json()) as {
+            values: Record<string, string>
+            meetingDate?: string
+          }
           // 成功時: 次回チャレンジ発火（Cloudflare 仕様上明示 reset が必要）。
           turnstileGate.reset()
         } else {
@@ -340,7 +345,12 @@ export function ChatView({ templateId, templateName, mode, fields, isGuest }: Pr
     // そのまま AdjustView へ遷移する。
     // 振り分け失敗 warning は sessionStorage に残し、AdjustView 初回マウントで toast 化。
     const title = `${templateName} ${new Date().toLocaleDateString('ja-JP')}`
-    const meetingDate = todayIso()
+    // 会話で開催日が絶対日付として抽出されていればそれを、無ければ暫定で今日（開催日欄で手動調整可）。
+    const extractedMeetingDate =
+      typeof result?.meetingDate === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(result.meetingDate)
+        ? result.meetingDate
+        : null
+    const meetingDate = extractedMeetingDate ?? todayIso()
     if (extractFailed) {
       sessionStorage.setItem(
         'minutes:draft-warning',
@@ -354,9 +364,11 @@ export function ChatView({ templateId, templateName, mode, fields, isGuest }: Pr
     // ゲスト向け AdjustView 到達ルートへ渡し、そのまま遷移する（createMinute は呼ばない）。
     if (isGuest) {
       try {
+        // content と meta（meetingDate）を分離したネスト構造で保存。GuestAdjustBootstrap 側が
+        // { content, meetingDate } 形式で読む（release/sync 未リリースにつき後方互換不要）。
         sessionStorage.setItem(
           `minutes:guest-chat-draft:${templateId}`,
-          JSON.stringify(content),
+          JSON.stringify({ content, meetingDate }),
         )
       } catch {
         // 書き込み失敗は致命でない（AdjustView 側は空初期値にフォールバックする）。

@@ -8,6 +8,7 @@ import {
   SYSTEM_PROMPT_CHAT_TO_FIELDS,
   buildChatToFieldsJsonSchema,
   buildChatToFieldsUserPrompt,
+  normalizeMeetingDate,
 } from '@/lib/ai/prompts/chat-to-fields'
 
 /**
@@ -157,7 +158,7 @@ const extractFieldsSchema = z.object({
 export async function extractFieldsFromChat(input: {
   fields: Array<{ name: string; label: string }>
   conversation: Array<{ role: 'user' | 'assistant'; content: string }>
-}): Promise<{ values: Record<string, string> }> {
+}): Promise<{ values: Record<string, string>; meetingDate?: string }> {
   const parsed = extractFieldsSchema.parse(input)
   // 空 fields で来た場合は AI を呼ばず空 values を返す（cost 0・zod .min(1) 早期 return）。
   if (parsed.fields.length === 0) return { values: {} }
@@ -220,5 +221,9 @@ export async function extractFieldsFromChat(input: {
     const v = (rawValues as Record<string, unknown>)[f.name]
     values[f.name] = typeof v === 'string' ? v : ''
   }
-  return { values }
+  // 会話で開催日が絶対日付として明示された場合のみ meetingDate を返す（ゲスト route と同一ロジック）。
+  const meetingDate = normalizeMeetingDate(
+    (toolUse.input as { meeting_date?: unknown }).meeting_date,
+  )
+  return meetingDate !== undefined ? { values, meetingDate } : { values }
 }
