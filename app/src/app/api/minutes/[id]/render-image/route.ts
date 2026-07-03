@@ -21,13 +21,10 @@
  */
 import { NextRequest, NextResponse } from 'next/server'
 import { createSupabaseServerClient } from '@/lib/supabase/server'
-import {
-  renderPdfToImages,
-  renderMinuteRawWithOverlayToImages,
-  renderMinuteBuiltinBgWithOverlayToImages,
-  getPdfNumPages,
-  type MinuteOverlayField,
-} from '@/lib/pdf-output/image-renderer'
+import { renderPdfToImages, getPdfNumPages } from '@/lib/pdf-output/image-render-worker'
+import { renderMinuteRawWithOverlayToImages } from '@/lib/pdf-output/image-render-raw-overlay'
+import { renderMinuteBuiltinBgWithOverlayToImages } from '@/lib/pdf-output/image-renderer'
+import { type MinuteOverlayField } from '@/lib/pdf-output/image-render-overlay-shared'
 import { clampDpi } from '@/lib/pdf-output/dpi-downgrade'
 import type { WhiteoutBox } from '@/lib/parsers/pdf/whiteout-pipeline'
 import type { PdfField } from '@/lib/ai/schemas/pdf-field-schema'

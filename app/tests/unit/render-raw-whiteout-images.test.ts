@@ -19,7 +19,7 @@ vi.mock('@/lib/parsers/pdf/whiteout-composite', () => ({
   compositeWhiteoutOnPng: (...args: unknown[]) => compositeMock(...args),
 }))
 
-import { renderRawPdfWithWhiteoutToImages } from '@/lib/pdf-output/image-renderer'
+import { renderRawPdfWithWhiteoutToImages } from '@/lib/pdf-output/image-render-raw-overlay'
 import type { WhiteoutBox } from '@/lib/parsers/pdf/whiteout-pipeline'
 
 const RAW = new Uint8Array([1, 2, 3])

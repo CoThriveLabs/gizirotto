@@ -97,7 +97,7 @@ vi.mock('@/lib/parsers/pdf/analyze-pipeline', () => ({
 vi.mock('@/lib/parsers/image/image-to-pdf', () => ({
   imageToA4Pdf: vi.fn().mockResolvedValue(new Uint8Array(4)),
 }))
-vi.mock('@/lib/pdf-output/image-renderer', () => ({
+vi.mock('@/lib/pdf-output/image-render-worker', () => ({
   getPdfNumPages: vi.fn().mockResolvedValue(1),
   renderPdfToImages: vi.fn().mockResolvedValue({
     bytes: new Uint8Array([0, 1, 2]),

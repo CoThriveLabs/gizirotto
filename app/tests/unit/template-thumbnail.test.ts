@@ -3,7 +3,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 // image-renderer をモック（worker spawn を避ける）
 const renderMock = vi.fn()
 const numPagesMock = vi.fn()
-vi.mock('@/lib/pdf-output/image-renderer', () => ({
+vi.mock('@/lib/pdf-output/image-render-worker', () => ({
   renderPdfToImages: (...args: unknown[]) => renderMock(...args),
   getPdfNumPages: (...args: unknown[]) => numPagesMock(...args),
 }))

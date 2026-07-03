@@ -9,11 +9,8 @@
  */
 import { NextRequest, NextResponse } from 'next/server'
 import { createSupabaseServerClient } from '@/lib/supabase/server'
-import {
-  renderPdfToImages,
-  renderRawPdfWithWhiteoutToImages,
-  getPdfNumPages,
-} from '@/lib/pdf-output/image-renderer'
+import { renderPdfToImages, getPdfNumPages } from '@/lib/pdf-output/image-render-worker'
+import { renderRawPdfWithWhiteoutToImages } from '@/lib/pdf-output/image-render-raw-overlay'
 import { clampDpi } from '@/lib/pdf-output/dpi-downgrade'
 import type { WhiteoutBox } from '@/lib/parsers/pdf/whiteout-pipeline'
 import { errorResponse } from '@/lib/api/error-response'

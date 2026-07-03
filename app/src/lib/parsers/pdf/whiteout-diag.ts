@@ -1,13 +1,12 @@
 import type { PdfBox } from './pdf-types'
+import { type FieldBox, type RasterPagePixels } from './field-bbox-detector'
 import {
-  type FieldBox,
-  type RasterPagePixels,
   INK_BORDER_MARGIN_PX,
   INK_LUMA_DELTA,
   INK_SCAN_STEP,
   MIN_INK_SCAN_PX,
   INK_MIN_COMPONENT,
-} from './field-bbox-detector'
+} from './whiteout-constants'
 import type { InkResult, FieldLabelDecision } from './whiteout-pipeline'
 
 /**

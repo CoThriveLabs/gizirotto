@@ -11,7 +11,7 @@ import { convertDocxToBlankPdf } from '@/lib/cloudconvert'
 import { analyzePdfFull } from '@/lib/parsers/pdf/analyze-pipeline'
 import { imageToA4Pdf } from '@/lib/parsers/image/image-to-pdf'
 import { generateTemplateThumbnail } from '@/lib/pdf-output/template-thumbnail'
-import { renderPdfToImages, getPdfNumPages } from '@/lib/pdf-output/image-renderer'
+import { renderPdfToImages, getPdfNumPages } from '@/lib/pdf-output/image-render-worker'
 import type { TemplateField } from '@/lib/ai/schemas/template-schema'
 import type { PdfField } from '@/lib/ai/schemas/pdf-field-schema'
 import {

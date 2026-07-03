@@ -5,11 +5,13 @@ import type { CellClassification, CellRole } from './whiteout-role-classifier'
 import {
   type FieldBox,
   type RasterPagePixels,
+  LEFT_LABEL_COL_MAX_W_RATIO,
+} from './field-bbox-detector'
+import {
   INSET_LEFT_PT,
   INSET_RIGHT_PT,
   INSET_TOP_PT,
   INSET_BOTTOM_PT,
-  LEFT_LABEL_COL_MAX_W_RATIO,
   LABEL_FIELD_AREA_MAX_RATIO,
   FULLWIDTH_BAND_RATIO,
   POS_LABEL_MAX_W_RATIO,
@@ -24,7 +26,7 @@ import {
   LABEL_COLHIST_ZERO_MAX,
   VLINE_RESIDUE_RUN_RATIO,
   INK_MIN_COMPONENT,
-} from './field-bbox-detector'
+} from './whiteout-constants'
 import { logExcludeLabel, logInkCell, logInkDist, logInkName, fmtBox } from './whiteout-diag'
 
 /**

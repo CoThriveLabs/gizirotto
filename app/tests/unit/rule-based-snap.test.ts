@@ -5,20 +5,21 @@ import {
   identifyEntryCells,
   matchBandForField,
   splitByHorizontalGap,
-  boundingBox,
   insetBox,
-  expandRightEdgeByPixels,
-  expandBottomEdgeByPixels,
   computeAreaAEntryLeft,
   resolveAreaBEntryLeft,
-  probeAreaBEntryLeftByPixels,
-  splitBandBByPixelHLines,
   type Band,
 } from '@/lib/pdf-output/rule-based-snap'
-import type { PageMeta, PagedBboxField } from '@/lib/pdf-output/bbox-coords'
 import {
-  type FieldBox,
-  type RasterPagePixels,
+  boundingBox,
+  expandRightEdgeByPixels,
+  expandBottomEdgeByPixels,
+  probeAreaBEntryLeftByPixels,
+  splitBandBByPixelHLines,
+} from '@/lib/pdf-output/rule-based-snap-pixels'
+import type { PageMeta, PagedBboxField } from '@/lib/pdf-output/bbox-coords'
+import { type FieldBox, type RasterPagePixels } from '@/lib/parsers/pdf/field-bbox-detector'
+import {
   BAND_GROUP_GAP_PT,
   BAND_RANGE_SPLIT_GAP_PT,
   POS_LABEL_MAX_W_RATIO,
@@ -26,7 +27,7 @@ import {
   INSET_RIGHT_PT,
   INSET_TOP_PT,
   INSET_BOTTOM_PT,
-} from '@/lib/parsers/pdf/field-bbox-detector'
+} from '@/lib/parsers/pdf/whiteout-constants'
 
 // A4 相当ページ（widthPt=595, heightPt=842）。labelMaxW = 595×0.22 ≈ 130.9。
 const META: PageMeta = {
