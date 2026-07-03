@@ -7,7 +7,8 @@ import {
   MIN_INK_SCAN_PX,
   INK_MIN_COMPONENT,
 } from './whiteout-constants'
-import type { InkResult, FieldLabelDecision } from './whiteout-pipeline'
+import type { InkResult } from './whiteout-ink-detector'
+import type { FieldLabelDecision } from './whiteout-label-classifier'
 
 /**
  * v0.8.2 §3-B-2 ink-name 診断専用パラメータ（**観測のみ・判定不使用**）。検出側 const ではなく
@@ -18,6 +19,12 @@ import type { InkResult, FieldLabelDecision } from './whiteout-pipeline'
  */
 const INK_NAME_LEFT_SKIP_PX = 8
 const INK_NAME_SCAN_EXPAND_PT = 20
+
+/**
+ * 真因診断ログ。field/written/label の座標を実値で dump して、座標系一致性 / どの field が
+ * どの理由で除外されたかを見える化する。既定 ON、`WHITEOUT_DIAG=0` で抑制可能。
+ */
+export const WHITEOUT_DIAG = process.env.WHITEOUT_DIAG !== '0'
 
 export function fmtBox(b: PdfBox): string {
   return `x=${b.x.toFixed(1)} y=${b.y.toFixed(1)} w=${b.w.toFixed(1)} h=${b.h.toFixed(1)}`
