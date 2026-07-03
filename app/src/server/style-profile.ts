@@ -69,3 +69,92 @@ export async function regenerateStyleProfile(): Promise<
 
   return result
 }
+
+export type StyleLearningStateResult = {
+  ok: true
+  enabled: boolean
+  hasProfile: boolean
+  lastUpdatedAt: string | null
+} | { ok: false; code: 'UNAUTHENTICATED' | 'NOT_IN_FAMILY' }
+
+/**
+ * 設定画面表示用の現在状態取得（学習 ON/OFF・プロファイル生成済か・最終更新日時）。
+ */
+export async function getStyleLearningState(): Promise<StyleLearningStateResult> {
+  const supabase = await createSupabaseServerClient()
+  const {
+    data: { user },
+  } = await supabase.auth.getUser()
+  if (!user) return { ok: false, code: 'UNAUTHENTICATED' }
+
+  const { data: sessionData } = await supabase.auth.getSession()
+  const familyId = decodeAccessTokenClaims(sessionData.session?.access_token)?.family_id
+  if (!familyId) return { ok: false, code: 'NOT_IN_FAMILY' }
+
+  const { data: family } = await supabase
+    .from('families')
+    .select('style_learning_enabled')
+    .eq('id', familyId)
+    .maybeSingle()
+
+  const { data: styleRow } = await supabase
+    .from('user_styles')
+    .select('last_updated_at')
+    .eq('family_id', familyId)
+    .maybeSingle()
+
+  return {
+    ok: true,
+    enabled: family?.style_learning_enabled !== false,
+    hasProfile: !!styleRow,
+    lastUpdatedAt: styleRow?.last_updated_at ?? null,
+  }
+}
+
+/**
+ * 世帯単位の学習 ON/OFF トグル。OFF にしてもプロファイル自体は削除しない
+ * （再度 ON にすれば復活する。完全削除は deleteStyleLearningData で行う）。
+ */
+export async function setStyleLearningEnabled(
+  enabled: boolean,
+): Promise<{ ok: true } | { ok: false; code: 'UNAUTHENTICATED' | 'NOT_IN_FAMILY' | 'DB_ERROR' }> {
+  const supabase = await createSupabaseServerClient()
+  const {
+    data: { user },
+  } = await supabase.auth.getUser()
+  if (!user) return { ok: false, code: 'UNAUTHENTICATED' }
+
+  const { data: sessionData } = await supabase.auth.getSession()
+  const familyId = decodeAccessTokenClaims(sessionData.session?.access_token)?.family_id
+  if (!familyId) return { ok: false, code: 'NOT_IN_FAMILY' }
+
+  const { error } = await supabase
+    .from('families')
+    .update({ style_learning_enabled: enabled })
+    .eq('id', familyId)
+  if (error) return { ok: false, code: 'DB_ERROR' }
+
+  return { ok: true }
+}
+
+/**
+ * 学習データ（user_styles プロファイル）の完全削除。PRIVACY.md L64「学習された書式の削除」を担保する。
+ */
+export async function deleteStyleLearningData(): Promise<
+  { ok: true } | { ok: false; code: 'UNAUTHENTICATED' | 'NOT_IN_FAMILY' | 'DB_ERROR' }
+> {
+  const supabase = await createSupabaseServerClient()
+  const {
+    data: { user },
+  } = await supabase.auth.getUser()
+  if (!user) return { ok: false, code: 'UNAUTHENTICATED' }
+
+  const { data: sessionData } = await supabase.auth.getSession()
+  const familyId = decodeAccessTokenClaims(sessionData.session?.access_token)?.family_id
+  if (!familyId) return { ok: false, code: 'NOT_IN_FAMILY' }
+
+  const { error } = await supabase.from('user_styles').delete().eq('family_id', familyId)
+  if (error) return { ok: false, code: 'DB_ERROR' }
+
+  return { ok: true }
+}

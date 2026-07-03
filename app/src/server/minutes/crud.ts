@@ -35,6 +35,7 @@ const updateMinuteSchema = z.object({
   title: z.string().min(1).max(100).optional(),
   meetingDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
   content: contentSchema.optional(),
+  excludeFromLearning: z.boolean().optional(),
 })
 
 export type CreateMinuteInput = z.infer<typeof createMinuteSchema>
@@ -54,7 +55,7 @@ export async function getMinutes(minutesId: string) {
   const { data, error } = await supabase
     .from('minutes')
     .select(
-      'id, family_id, template_id, title, meeting_date, content_json, bbox_overrides, new_fields, output_pdf_path, output_docx_path, thumbnail_path, thumbnail_status, source_mode, created_at, updated_at, template:templates(name, source_format)',
+      'id, family_id, template_id, title, meeting_date, content_json, bbox_overrides, new_fields, output_pdf_path, output_docx_path, thumbnail_path, thumbnail_status, source_mode, exclude_from_learning, created_at, updated_at, template:templates(name, source_format)',
     )
     .eq('id', minutesId)
     .maybeSingle()
@@ -162,6 +163,9 @@ export async function updateMinute(input: UpdateMinuteInput): Promise<{ id: stri
   const patch: Record<string, unknown> = { updated_at: new Date().toISOString() }
   if (parsed.title !== undefined) patch.title = parsed.title
   if (parsed.meetingDate !== undefined) patch.meeting_date = parsed.meetingDate
+  if (parsed.excludeFromLearning !== undefined) {
+    patch.exclude_from_learning = parsed.excludeFromLearning
+  }
   if (parsed.content !== undefined) {
     patch.content_json = parsed.content
     patch.output_pdf_path = null

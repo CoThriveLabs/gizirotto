@@ -21,6 +21,8 @@ import { getClientIp } from '@/lib/client-ip'
 import { recordGuestAiUsage } from '@/lib/guest-metrics'
 import { isBuiltinTemplate } from '@/lib/templates/builtin-ids'
 import { guestAiGate } from '@/lib/guest-gate'
+import { fetchStyleSummary } from '@/lib/ai/style/fetch-style-summary'
+import { asStyleDb } from '@/lib/ai/style/style-db-types'
 
 export const runtime = 'edge'
 
@@ -104,6 +106,12 @@ export async function POST(req: Request) {
     return jsonError('TEMPLATE_HAS_NO_FIELDS', 400)
   }
 
+  // 家庭スタイルプロファイルの取得は best-effort。未生成・取得失敗・学習 OFF は
+  // null のまま従来挙動（suffix にスタイルブロックが乗らない）にフォールバックする。
+  const styleSummary = familyId
+    ? await fetchStyleSummary(asStyleDb(supabase), familyId)
+    : null
+
   // Authenticated path: 3-layer atomic usage check (family / user / global).
   if (user) {
     const usageCheck = await checkAiUsage({ familyId, userId: user.id })
@@ -126,8 +134,8 @@ export async function POST(req: Request) {
     parsed.data.mode === 'A-1' ? SYSTEM_PROMPT_CHAT_A1 : SYSTEM_PROMPT_CHAT_A2
   const systemSuffix =
     parsed.data.mode === 'A-1'
-      ? buildSystemA1Suffix({ templateFields })
-      : buildSystemA2Suffix({ templateFields })
+      ? buildSystemA1Suffix({ templateFields, styleSummary })
+      : buildSystemA2Suffix({ templateFields, styleSummary })
 
   const messages = [
     ...parsed.data.history.map((m) => ({ role: m.role, content: m.content })),

@@ -4,6 +4,7 @@ import { getMinutes } from '@/server/minutes'
 import { MinutesViewer } from './_components/MinutesViewer'
 import { MinutesActions } from './_components/MinutesActions'
 import { OutputButtons } from './_components/OutputButtons'
+import { ExcludeFromLearningToggle } from './_components/ExcludeFromLearningToggle'
 
 /**
  * 議事録詳細ページ。
@@ -77,6 +78,13 @@ export default async function MinutesDetailPage({
         title={minutes.title}
         thumbnailStatus={minutes.thumbnail_status}
       />
+
+      <section className="pt-2">
+        <ExcludeFromLearningToggle
+          minuteId={minutes.id}
+          initialExcluded={minutes.exclude_from_learning ?? false}
+        />
+      </section>
 
       <section className="text-xs text-gray-400 space-y-1 pt-4 border-t border-gizirotto-blue-100">
         <p>※ AI による生成結果は完璧ではありません</p>

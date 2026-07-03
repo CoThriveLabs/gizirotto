@@ -2,9 +2,9 @@ import Anthropic from '@anthropic-ai/sdk'
 import { z } from 'zod'
 import { createSupabaseServerClient } from '@/lib/supabase/server'
 import {
-  SYSTEM_PROMPT_FORMAT_ITEM,
   buildUserPromptFormatItem,
   buildCustomToneInstruction,
+  buildFormatItemSystemBlocks,
   TONE_INSTRUCTIONS,
 } from '@/lib/ai/prompts/format-item'
 import { formatSseErrorPayload } from '@/lib/api/error-response'
@@ -17,6 +17,10 @@ import {
 import { getClientIp } from '@/lib/client-ip'
 import { recordGuestAiUsage } from '@/lib/guest-metrics'
 import { guestAiGate } from '@/lib/guest-gate'
+import { fetchStyleSummary } from '@/lib/ai/style/fetch-style-summary'
+import { fetchPastFieldExamples } from '@/lib/ai/style/fetch-past-field-examples'
+import { isStyleLearningEnabled } from '@/lib/ai/style/is-style-learning-enabled'
+import { asStyleDb } from '@/lib/ai/style/style-db-types'
 
 export const runtime = 'edge'
 
@@ -101,11 +105,30 @@ export async function POST(req: Request) {
       ? buildCustomToneInstruction(custom_text!) // refine 通過済みなので非 null
       : TONE_INSTRUCTIONS[tone]
 
+  // 家庭スタイルプロファイルの取得は best-effort。未生成・取得失敗・学習 OFF は
+  // null のまま従来挙動（system にスタイルブロックが乗らない）にフォールバックする。
+  const styleDb = familyId ? asStyleDb(supabase) : null
+  const styleSummary = familyId && styleDb ? await fetchStyleSummary(styleDb, familyId) : null
+  // few-shot（案B）は omakase トーン時のみ・学習 ON の家庭限定で乗せる
+  // （プロファイル未生成でも過去 minutes さえあれば独立して効く）。
+  const pastExamples =
+    tone === 'omakase' && familyId && styleDb && (await isStyleLearningEnabled(styleDb, familyId))
+      ? await fetchPastFieldExamples(styleDb, {
+          familyId,
+          fieldName: parsed.data.field_name,
+        })
+      : []
+
   const userPrompt = buildUserPromptFormatItem({
     fieldName: parsed.data.field_name,
     rawText: parsed.data.raw_text,
     toneInstruction,
+    pastExamples,
   })
+
+  // base（cache_control:ephemeral）は変更せず、スタイル要約は 2 つ目の text block として
+  // cache 外に追加する（案A・設計書 §5-2）。styleSummary が null の場合は従来どおり 1 block のみ。
+  const systemBlocks = buildFormatItemSystemBlocks(styleSummary)
 
   const stream = new ReadableStream({
     async start(controller) {
@@ -120,13 +143,7 @@ export async function POST(req: Request) {
         const params: any = {
           model,
           max_tokens: 1024,
-          system: [
-            {
-              type: 'text',
-              text: SYSTEM_PROMPT_FORMAT_ITEM,
-              cache_control: { type: 'ephemeral' },
-            },
-          ],
+          system: systemBlocks,
           messages: [{ role: 'user', content: userPrompt }],
         }
 
