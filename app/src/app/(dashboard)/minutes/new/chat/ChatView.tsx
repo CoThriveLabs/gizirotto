@@ -1,31 +1,16 @@
 'use client'
 
-import { useRouter } from 'next/navigation'
-import { useEffect, useRef, useState } from 'react'
+import { useState } from 'react'
 import {
-  createChatSession,
-  extractFieldsFromChat,
-  persistChatTurn,
-} from '@/server/chat-sessions'
-import { createMinute } from '@/server/minutes'
-import { humanizeErrorCode } from '@/lib/errors/user-message'
-import {
-  LimitModal,
   type LimitScope,
   type LimitResource,
 } from '@/components/usage/limit-modal'
-import { ResourceLimitError } from '@/lib/db-error-mapper'
-import { GizirottoIcon } from '@/components/GizirottoIcon'
-import { renderWithGizirotto } from '@/components/chat/renderWithGizirotto'
 import { useFormCache } from '@/lib/hooks/use-form-cache'
-import { writeFormCache, getDraftStorageSafe, GUEST_SNAPSHOT_TTL_MS } from '@/lib/utils/form-cache'
-import {
-  guestChatDraftFormId,
-  GUEST_CHAT_DRAFT_RESTORE_PATH,
-} from '@/lib/utils/guest-adjust-draft'
-import { TurnstileWidget } from '@/components/auth/TurnstileWidget'
+import { GUEST_SNAPSHOT_TTL_MS } from '@/lib/utils/form-cache'
 import { useGuestTurnstileGate } from '@/hooks/useGuestTurnstileGate'
-import { parseSseStream } from '@/lib/utils/sse-stream'
+import { useChatSession } from './use-chat-session'
+import { useChatFinalize } from './use-chat-finalize'
+import ChatViewLayout from './_components/ChatViewLayout'
 
 export type TemplateField = { name: string; label: string }
 
@@ -38,7 +23,7 @@ interface Props {
   isGuest?: boolean
 }
 
-type ChatMessage = { role: 'user' | 'assistant'; content: string }
+export type ChatMessage = { role: 'user' | 'assistant'; content: string }
 
 /** snapshot shape stored by useFormCache for the chat flow */
 type ChatSnapshot = {
@@ -46,30 +31,29 @@ type ChatSnapshot = {
   input: string
 }
 
-const COMPLETE_TOKEN = '[[CHAT_COMPLETE]]'
+/** ChatView 上限到達モーダル state（AI route 429 / リソース上限 ResourceLimitError 両対応）。 */
+export type ChatLimitModalState = {
+  open: boolean
+  scope: LimitScope | null
+  resource: LimitResource | null
+  resetAt: string | null
+}
 
 export function ChatView({ templateId, templateName, mode, fields, isGuest }: Props) {
-  const router = useRouter()
-  const [sessionId, setSessionId] = useState<string | null>(null)
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [input, setInput] = useState('')
-  const [streaming, setStreaming] = useState(false)
-  const [aiSuggestComplete, setAiSuggestComplete] = useState(false)
   const [errorMsg, setErrorMsg] = useState<string | null>(null)
-  const [finalizing, setFinalizing] = useState(false)
   // Guest Turnstile ゲート: 送信直前に await consumeToken() で到着待機（初回 kick-off が
   // widget mount より先に走る race を吸収）。ログイン済み時は enabled=false で undefined
   // 即 return するのでログインユーザー経路は完全不変。
   const turnstileGate = useGuestTurnstileGate(isGuest ?? false)
   // 上限到達モーダル状態 (AI route 429 / リソース上限 ResourceLimitError 両対応)
-  const [limitModal, setLimitModal] = useState<{
-    open: boolean
-    scope: LimitScope | null
-    resource: LimitResource | null
-    resetAt: string | null
-  }>({ open: false, scope: null, resource: null, resetAt: null })
-  const initRan = useRef(false)
-  const scrollRef = useRef<HTMLDivElement | null>(null)
+  const [limitModal, setLimitModal] = useState<ChatLimitModalState>({
+    open: false,
+    scope: null,
+    resource: null,
+    resetAt: null,
+  })
 
   // form-cache: 議事録化成功時に snapshot をクリアする用途のみで使う（saveSnapshot 経路は撤去済み）。
   // onRestore は別セッションから戻ってきた時の会話復元用に温存（将来の form-cache 拡張時に活用）。
@@ -82,487 +66,48 @@ export function ChatView({ templateId, templateName, mode, fields, isGuest }: Pr
     },
   })
 
-  // 初回マウントで chat_sessions 作成 + 最初の assistant 質問を取得
-  useEffect(() => {
-    if (initRan.current) return
-    initRan.current = true
-    void initSession()
-  }, [])
+  // 初回 init / scroll / 送信ストリーミング（sendMessage・onSend）を束ねる hook。
+  const session = useChatSession({
+    templateId,
+    mode,
+    isGuest,
+    messages,
+    setMessages,
+    input,
+    setInput,
+    setErrorMsg,
+    setLimitModal,
+    turnstileGate,
+  })
 
-  useEffect(() => {
-    scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight })
-  }, [messages, streaming])
-
-  async function initSession() {
-    try {
-      // Guests get a client-generated UUID as a session ID so chat/stream can route
-      // the conversation without persisting a chat_sessions row in the database.
-      const id = isGuest
-        ? crypto.randomUUID()
-        : (await createChatSession({ templateId, mode })).id
-      setSessionId(id)
-      // 最初の assistant 発言を取りに行く（user メッセージは空のキック）
-      await sendMessage('（はじめてください）', id, [])
-    } catch {
-      setErrorMsg('チャットを開始できませんでした。少し時間を置いて再度お試しください。')
-    }
-  }
-
-  async function onSend(e: React.FormEvent) {
-    e.preventDefault()
-    if (streaming || !input.trim() || !sessionId) return
-    const userMessage = input.trim()
-    setInput('')
-    await sendMessage(userMessage, sessionId, messages)
-  }
-
-  async function sendMessage(
-    userMessage: string,
-    sid: string,
-    history: ChatMessage[],
-  ) {
-    setStreaming(true)
-    setErrorMsg(null)
-    // user メッセージを即時 push（初回 kick の "（はじめてください）" は隠す）
-    const isKick = history.length === 0
-    if (!isKick) {
-      setMessages((prev) => [...prev, { role: 'user', content: userMessage }])
-    }
-
-    // Await token arrival. If enabled=false (logged-in), resolves undefined immediately
-    // and the ...spread below omits the field entirely — so logged-in bodies remain unchanged.
-    // For guests, this waits until TurnstileWidget's onVerify has delivered a token, fixing
-    // the initial kick-off race where the effect fired before challenge completion.
-    const capturedToken = await turnstileGate.consumeToken()
-
-    let assistantText = ''
-    try {
-      const res = await fetch('/api/minutes/chat/stream', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({
-          session_id: sid,
-          mode,
-          template_id: templateId,
-          history,
-          latest_user_message: userMessage,
-          ...(capturedToken !== undefined ? { turnstileToken: capturedToken } : {}),
-        }),
-      })
-      // 429 の 2 分岐: (a) ゲスト AI 濫用防御（GUEST_AI_DAILY_LIMIT・時間経過で自動復帰）、
-      // (b) ログインユーザーの月次上限（AI_LIMIT_EXCEEDED・LimitModal で出し分け）。
-      // ゲスト経路ではログイン誘導ではなく通常のエラーメッセージにして、時間を置けば復帰できる
-      // ことを伝える（「議事録 2 件制限」は guestTemplateLimit で別途担保しているため、AI 濫用
-      // 防御到達時にログインを強制しない）。
-      if (res.status === 429) {
-        try {
-          const body = (await res.json()) as {
-            error?: string
-            code?: string
-            scope?: LimitScope
-            reset_at?: string
-          }
-          if (body.error === 'GUEST_AI_DAILY_LIMIT') {
-            setErrorMsg('AI 呼び出しが集中しています。しばらく待ってから再度お試しください。')
-            throw new Error('GUEST_AI_DAILY_LIMIT')
-          }
-          if (body.code === 'AI_LIMIT_EXCEEDED' && body.scope) {
-            setLimitModal({
-              open: true,
-              scope: body.scope,
-              resource: null,
-              resetAt: body.reset_at ?? null,
-            })
-          }
-        } catch {
-          // JSON 解析失敗時は通常エラーフローに倒す
-        }
-        throw new Error('AI_LIMIT_EXCEEDED')
-      }
-      if (!res.ok || !res.body) throw new Error('STREAM_FAILED')
-
-      // 空の assistant メッセージを追加して逐次更新
-      setMessages((prev) => [...prev, { role: 'assistant', content: '' }])
-
-      await parseSseStream(res.body, (text) => {
-        assistantText += text
-        setMessages((prev) => {
-          const next = [...prev]
-          next[next.length - 1] = {
-            role: 'assistant',
-            content: stripCompleteToken(assistantText),
-          }
-          return next
-        })
-      })
-
-      // 完了トークン検知 → AI 提案の完了状態に
-      const aiComplete = assistantText.includes(COMPLETE_TOKEN)
-      if (aiComplete) setAiSuggestComplete(true)
-
-      // DB persist（kick は user メッセージを保存しない: スキーマ min(1) violation 回避）
-      // Guest conversations are ephemeral — no DB row is created.
-      if (!isKick && !isGuest) {
-        try {
-          await persistChatTurn({
-            sessionId: sid,
-            userMessage,
-            assistantMessage: stripCompleteToken(assistantText) || '(空)',
-          })
-        } catch {
-          // 永続化失敗はサイレント、UX 阻害しない（チャット継続優先）
-        }
-      }
-      // 成功時: 使い切ったトークンをリセットし、次回送信に備えて新チャレンジを発火する。
-      // Cloudflare Turnstile invisible の仕様上、明示 reset を呼ばないと次のトークンが
-      // 発火されず、2 回目以降の consumeToken() が永久待機になる。enabled=false / widget
-      // 未 mount 時は no-op なのでログインユーザー経路は完全不変。
-      if (isGuest) turnstileGate.reset()
-    } catch (e) {
-      // GUEST_AI_DAILY_LIMIT / AI_LIMIT_EXCEEDED は 429 分岐内で既に setErrorMsg / setLimitModal
-      // 済み。汎用エラーメッセージで上書きしない。それ以外は「返答の取得に失敗」を表示。
-      const isKnownLimit =
-        e instanceof Error &&
-        (e.message === 'GUEST_AI_DAILY_LIMIT' || e.message === 'AI_LIMIT_EXCEEDED')
-      if (!isKnownLimit) {
-        setErrorMsg('返答の取得に失敗しました。少し時間を置いて再度お試しください。')
-      }
-      // Turnstile トークンは使い切ったので次回チャレンジを明示発火。
-      // enabled=false / widget 未 mount 時は no-op。
-      turnstileGate.reset()
-      // 失敗したターンの空 assistant 行を削除
-      setMessages((prev) => {
-        if (prev.length > 0 && prev[prev.length - 1].role === 'assistant' && prev[prev.length - 1].content === '') {
-          return prev.slice(0, -1)
-        }
-        return prev
-      })
-    } finally {
-      setStreaming(false)
-    }
-  }
-
-  async function onFinalize() {
-    setFinalizing(true)
-    setErrorMsg(null)
-
-    // AI で会話履歴を各 field に項目別バインドする。
-    // 失敗時 fallback = 最初の field に memo 詰め + 確認画面に警告表示。
-    let content: Record<string, string>
-    let extractFailed = false
-    // result は try 内で代入され、meetingDate 確定（下方）は try の外。extractFailed 時は
-    // undefined になり得るので上位スコープで宣言し result?.meetingDate の optional chain で扱う。
-    let result: { values: Record<string, string>; meetingDate?: string } | undefined
-    const memo = messages
-      .map((m) => `[${m.role === 'user' ? 'ユーザー' : 'AI'}] ${m.content}`)
-      .join('\n')
-    if (fields.length === 0) {
-      // テンプレ field 抽出に失敗（旧形式テンプレ等）で fields=[] になったときの fallback。
-      // extractFieldsFromChat の zod は .min(1) で空を弾くため事前に fallback に倒す。
-      extractFailed = true
-      content = { '(振り分け不可)': memo }
-    } else {
-      try {
-        // ログインユーザーは既存 Server Action のまま。ゲストは Server Action 内の
-        // `if (!user) throw` に必ず引っかかるため、代わりにゲスト専用 route を叩く。
-        // Turnstile トークンは gate.consumeToken() で到着待ち（enabled=false 時は undefined）。
-        // 直前の送信で消費済みなら waiter で新チャレンジ到着まで待機する。
-        if (isGuest) {
-          const capturedToken = await turnstileGate.consumeToken()
-          const res = await fetch('/api/minutes/chat/extract-fields', {
-            method: 'POST',
-            headers: { 'content-type': 'application/json' },
-            body: JSON.stringify({
-              templateId,
-              conversation: messages,
-              ...(capturedToken !== undefined ? { turnstileToken: capturedToken } : {}),
-            }),
-          })
-          if (!res.ok) {
-            // トークンを使い切ったので次回チャレンジを明示発火。既存 catch が memo dump に落とす。
-            turnstileGate.reset()
-            throw new Error('EXTRACT_FIELDS_FAILED')
-          }
-          result = (await res.json()) as {
-            values: Record<string, string>
-            meetingDate?: string
-          }
-          // 成功時: 次回チャレンジ発火（Cloudflare 仕様上明示 reset が必要）。
-          turnstileGate.reset()
-        } else {
-          result = await extractFieldsFromChat({
-            fields,
-            conversation: messages,
-          })
-        }
-        const hasAnyValue = Object.values(result.values).some(
-          (v) => typeof v === 'string' && v.trim().length > 0,
-        )
-        if (!hasAnyValue) {
-          // extract が空 values を返した場合も confirm 画面の空表示を防ぐため fallback に倒す。
-          extractFailed = true
-          content = {}
-          for (const f of fields) content[f.name] = ''
-          if (fields.length > 0) content[fields[0].name] = memo
-          else content['(振り分け不可)'] = memo
-        } else {
-          content = result.values
-        }
-      } catch {
-        extractFailed = true
-        content = {}
-        for (const f of fields) content[f.name] = ''
-        if (fields.length > 0) content[fields[0].name] = memo
-      }
-    }
-
-    // content が完全空でもサーバ refine で reject されるため、
-    // 空ならチャット履歴 memo を確実に 1 キー詰める。
-    if (Object.keys(content).length === 0) {
-      content = { 'メモ': memo || '(会話履歴なし)' }
-      extractFailed = true
-    }
-
-    // ここで createMinute を 1 回実行し、そのまま AdjustView へ遷移する。
-    // 振り分け失敗 warning は sessionStorage に残し、AdjustView 初回マウントで toast 化。
-    // タブ単位で完結する一発通知のため、ここは localStorage 化しない。
-    const title = `${templateName} ${new Date().toLocaleDateString('ja-JP')}`
-    // 会話で開催日が絶対日付として抽出されていればそれを、無ければ暫定で今日（開催日欄で手動調整可）。
-    const extractedMeetingDate =
-      typeof result?.meetingDate === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(result.meetingDate)
-        ? result.meetingDate
-        : null
-    const meetingDate = extractedMeetingDate ?? todayIso()
-    if (extractFailed) {
-      sessionStorage.setItem(
-        'minutes:draft-warning',
-        'うまく振り分けられませんでした。編集画面で手動で編集してください。',
-      )
-    } else {
-      sessionStorage.removeItem('minutes:draft-warning')
-    }
-
-    // ゲストは minute レコードを持てない。抽出済み content を一度きりの form-cache エントリで
-    // ゲスト向け AdjustView 到達ルートへ渡し、そのまま遷移する（createMinute は呼ばない）。
-    // content と meta（meetingDate）を分離したネスト構造で保存。GuestAdjustBootstrap 側が
-    // { content, meetingDate } 形式で読む。form-cache（TTL 付き）経由にすることで、sweep による
-    // 期限切れ掃除の対象にも入り、無期限に残留しない。writeFormCache は書き込み失敗を内部で
-    // 握り潰すため、ここでの try/catch は不要。
-    if (isGuest) {
-      writeFormCache(
-        getDraftStorageSafe(),
-        guestChatDraftFormId(templateId),
-        { content, meetingDate },
-        GUEST_CHAT_DRAFT_RESTORE_PATH,
-      )
-      clearSnapshot()
-      router.push(`/minutes/new/adjust?template_id=${templateId}`)
-      return
-    }
-
-    try {
-      const result = await createMinute({
-        templateId,
-        title,
-        meetingDate,
-        content,
-        sourceMode: mode,
-      })
-      // Clear snapshot on successful save
-      clearSnapshot()
-      router.push(`/minutes/${result.id}/adjust`)
-    } catch (e) {
-      // 失敗時は遷移しない（ChatView に留まる）。
-      // 議事録月次上限 (ResourceLimitError) → LimitModal
-      // Server Action のシリアライズで instanceof が外れる場合に備え name + message で判定。
-      if (isResourceLimitError(e, 'minutes')) {
-        setLimitModal({
-          open: true,
-          scope: null,
-          resource: 'minutes',
-          resetAt: null,
-        })
-        sessionStorage.removeItem('minutes:draft-warning')
-        setFinalizing(false)
-        return
-      }
-      const isEmpty =
-        e instanceof Error && /EMPTY_CONTENT|empty_content/i.test(e.message)
-      setErrorMsg(
-        e instanceof Error && e.message === 'NOT_IN_FAMILY'
-          ? '家族の設定が反映されていません。少し時間を置いて再度お試しください。'
-          : isEmpty
-            ? 'まだ何も入っていないみたいです。もう少し会話してから議事録にしてください。'
-            : `保存に失敗しました: ${humanizeErrorCode(e instanceof Error ? e.message : null).message}`,
-      )
-      sessionStorage.removeItem('minutes:draft-warning')
-      setFinalizing(false)
-    }
-  }
-
-  const visibleMessages = messages
-  const canFinalize = !streaming && messages.some((m) => m.role === 'user')
-  // messages のレンダー直前。会話全体で GIZIROTTO_MAX_TOTAL 個まで、という通し番号を
-  // この render 呼び出し内だけで追跡するローカル変数。useState/useRef 化しない — render の
-  // たびに 0 から数え直しても、同じ messages 配列なら同じ位置が置換対象になり結果は毎回同じ
-  // （副作用を持たない）。
-  let gizirottoUsed = 0
+  // 議事録化（onFinalize）を束ねる hook。
+  const finalize = useChatFinalize({
+    templateId,
+    templateName,
+    mode,
+    fields,
+    isGuest,
+    messages,
+    turnstileGate,
+    clearSnapshot,
+    setErrorMsg,
+    setLimitModal,
+  })
 
   return (
-    <div className="flex-1 flex flex-col gap-3 min-h-0">
-      <div
-        ref={scrollRef}
-        className="flex-1 bg-white border border-gizirotto-blue-100 rounded p-3 overflow-y-auto min-h-[20rem] max-h-[60vh] space-y-3"
-      >
-        {visibleMessages.length === 0 && (
-          <div className="flex flex-col items-center gap-2 py-8 text-xs text-gray-400">
-            <GizirottoIcon size={48} anim="think" />
-            <p>会話を準備しています...</p>
-          </div>
-        )}
-        {visibleMessages.map((m, i) => (
-          <div
-            key={i}
-            className={
-              m.role === 'user'
-                ? 'flex justify-end'
-                : 'flex justify-start'
-            }
-          >
-            <div
-              className={
-                m.role === 'user'
-                  ? 'bg-gizirotto-blue-100 text-gizirotto-blue-900 px-3 py-2 rounded-2xl max-w-[80%] whitespace-pre-wrap text-sm'
-                  : 'bg-gizirotto-blue-50 text-gray-800 px-3 py-2 rounded-2xl max-w-[80%] whitespace-pre-wrap text-sm'
-              }
-            >
-              {m.role === 'assistant'
-                ? m.content
-                  ? (() => {
-                      const result = renderWithGizirotto(m.content, gizirottoUsed)
-                      gizirottoUsed += result.usedInThisText
-                      return result.node
-                    })()
-                  : streaming
-                    ? <GizirottoIcon size={28} anim="think" />
-                    : ''
-                : m.content}
-            </div>
-          </div>
-        ))}
-      </div>
-
-      {errorMsg && (
-        <p className="text-sm text-red-600" role="alert">
-          {errorMsg}
-        </p>
-      )}
-
-      {aiSuggestComplete && !finalizing && (
-        <div className="bg-gizirotto-blue-50 border border-gizirotto-blue-200 rounded p-3 text-sm text-gizirotto-blue-900 flex items-center gap-2">
-          <GizirottoIcon size={40} anim="pop" className="shrink-0" />
-          <span>だいたい揃ったみたいです。議事録にしますか？それとももう少し話しますか？</span>
-        </div>
-      )}
-
-      <form onSubmit={onSend} className="flex items-end gap-2">
-        <textarea
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
-              e.preventDefault()
-              void onSend(e as unknown as React.FormEvent)
-            }
-          }}
-          placeholder={streaming ? '返答中…' : 'メッセージを入力'}
-          disabled={streaming || finalizing}
-          rows={2}
-          className="flex-1 border border-gizirotto-blue-200 rounded px-3 py-2 text-base min-h-[3rem] resize-none"
-        />
-        <button
-          type="submit"
-          disabled={streaming || finalizing || !input.trim()}
-          className="bg-gizirotto-blue-700 text-white px-4 py-2 rounded hover:bg-gizirotto-blue-800 disabled:opacity-50"
-        >
-          送信
-        </button>
-      </form>
-
-      <div className="flex justify-end">
-        <button
-          type="button"
-          onClick={onFinalize}
-          disabled={!canFinalize || finalizing}
-          className="text-sm text-gizirotto-blue-700 hover:text-gizirotto-blue-900 disabled:text-gray-400"
-        >
-          {finalizing ? '準備中…' : '議事録にする'}
-        </button>
-      </div>
-
-      {/* Invisible Turnstile challenge for unauthenticated visitors.
-          Mounted only when isGuest=true and site key is configured.
-          Token flows through useGuestTurnstileGate so awaiters (kick-off etc.) get resolved. */}
-      {isGuest && (
-        <TurnstileWidget
-          ref={(w) => turnstileGate.bindWidget(w)}
-          onToken={turnstileGate.onToken}
-        />
-      )}
-
-      {/* AI 上限 / リソース上限の到達モーダル */}
-      <LimitModal
-        open={limitModal.open}
-        scope={limitModal.scope}
-        resource={limitModal.resource}
-        resetAt={limitModal.resetAt}
-        onClose={() =>
-          setLimitModal({
-            open: false,
-            scope: null,
-            resource: null,
-            resetAt: null,
-          })
-        }
-      />
-    </div>
+    <ChatViewLayout
+      messages={messages}
+      input={input}
+      onInputChange={setInput}
+      errorMsg={errorMsg}
+      session={session}
+      finalize={finalize}
+      limitModal={limitModal}
+      onCloseLimitModal={() =>
+        setLimitModal({ open: false, scope: null, resource: null, resetAt: null })
+      }
+      isGuest={isGuest}
+      turnstileGate={turnstileGate}
+    />
   )
-}
-
-/**
- * Server Action のシリアライズ仕様により、custom Error クラスの prototype は
- * クライアント側で失われる場合がある (instanceof が常に true とは限らない)。
- * ResourceLimitError は name='ResourceLimitError' + message='RESOURCE_LIMIT_EXCEEDED' を
- * 持つ sentinel として判定する。さらに instanceof チェックも併用 (両対応・冗長判定)。
- */
-function isResourceLimitError(
-  e: unknown,
-  resource: 'minutes' | 'templates',
-): boolean {
-  if (e instanceof ResourceLimitError) {
-    return e.resource === resource
-  }
-  if (e instanceof Error) {
-    const maybe = e as Error & { resource?: unknown }
-    if (
-      e.name === 'ResourceLimitError' &&
-      e.message === 'RESOURCE_LIMIT_EXCEEDED' &&
-      maybe.resource === resource
-    ) {
-      return true
-    }
-  }
-  return false
-}
-
-function stripCompleteToken(text: string): string {
-  return text.replaceAll(COMPLETE_TOKEN, '').trimEnd()
-}
-
-function todayIso(): string {
-  const d = new Date()
-  const y = d.getFullYear()
-  const m = String(d.getMonth() + 1).padStart(2, '0')
-  const day = String(d.getDate()).padStart(2, '0')
-  return `${y}-${m}-${day}`
 }

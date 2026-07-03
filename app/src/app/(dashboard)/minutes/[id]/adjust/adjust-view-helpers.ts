@@ -10,6 +10,9 @@ export type TemplateFieldDef = {
   multiline?: boolean
 }
 
+/** 整形（onFormat）の「整え方」選択肢。custom は自由入力指示を伴う。 */
+export type Tone = 'omakase' | 'calm' | 'polite' | 'bright' | 'custom'
+
 /**
  * 動的プレビュー: その field 自身の override.fontSize（自動なら fallback 12pt）と
  * bbox 高さの 70% のうち、小さい方を返す純関数（互換のため export 維持）。
