@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react'
 import {
   getStyleLearningState,
+  getUnreflectedMinutesBadge,
   regenerateStyleProfile,
   setStyleLearningEnabled,
   deleteStyleLearningData,
@@ -30,6 +31,7 @@ export function StyleLearningSection() {
   const [toggling, setToggling] = useState(false)
   const [deleting, setDeleting] = useState(false)
   const [message, setMessage] = useState<string | null>(null)
+  const [showRelearnBadge, setShowRelearnBadge] = useState(false)
 
   useEffect(() => {
     let mounted = true
@@ -52,6 +54,10 @@ export function StyleLearningSection() {
         hasProfile: res.hasProfile,
         lastUpdatedAt: res.lastUpdatedAt,
       })
+
+      const badge = await getUnreflectedMinutesBadge()
+      if (!mounted) return
+      if (badge.ok) setShowRelearnBadge(badge.shouldShowBadge)
     })()
     return () => {
       mounted = false
@@ -91,6 +97,8 @@ export function StyleLearningSection() {
             lastUpdatedAt: refreshed.lastUpdatedAt,
           })
         }
+        const badge = await getUnreflectedMinutesBadge()
+        if (badge.ok) setShowRelearnBadge(badge.shouldShowBadge)
       } else if (res.skippedReason === 'NO_MINUTES') {
         setMessage('学習に使える議事録がまだ足りません（3件以上必要です）。')
       } else if (res.skippedReason === 'AI_LIMIT_EXCEEDED') {
@@ -149,6 +157,15 @@ export function StyleLearningSection() {
           ? `学習済み${state.lastUpdatedAt ? `（最終更新: ${new Date(state.lastUpdatedAt).toLocaleDateString('ja-JP')}）` : ''}`
           : 'まだ学習されていません（議事録が3件以上になると学習できます）'}
       </p>
+
+      {showRelearnBadge && (
+        <p
+          className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded px-3 py-2"
+          role="status"
+        >
+          新しい議事録から学び直せます。「書き方を学習し直す」で最新の書き方を反映できます。
+        </p>
+      )}
 
       <div className="flex flex-wrap gap-2">
         <button

@@ -1,7 +1,7 @@
 /**
  * 設定画面から呼ぶスタイル学習系 Server Action のユニットテスト。
- * getStyleLearningState / setStyleLearningEnabled / deleteStyleLearningData を対象に、
- * 正常系・未認証・family未所属・DBエラーの分岐を網羅する。
+ * getStyleLearningState / setStyleLearningEnabled / deleteStyleLearningData /
+ * getUnreflectedMinutesBadge を対象に、正常系・未認証・family未所属・DBエラーの分岐を網羅する。
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 
@@ -12,6 +12,7 @@ const mocks = vi.hoisted(() => ({
   userStylesSelectResult: vi.fn(),
   familiesUpdateResult: vi.fn(),
   userStylesDeleteResult: vi.fn(),
+  minutesSelectResult: vi.fn(),
 }))
 
 vi.mock('@/lib/supabase/server', () => ({
@@ -35,6 +36,7 @@ vi.mock('@/lib/supabase/server', () => ({
         if (table === 'families') return Promise.resolve(mocks.familiesUpdateResult()).then(resolve)
         if (table === 'user_styles')
           return Promise.resolve(mocks.userStylesDeleteResult()).then(resolve)
+        if (table === 'minutes') return Promise.resolve(mocks.minutesSelectResult()).then(resolve)
         return Promise.resolve({ data: null, error: null }).then(resolve)
       }
       return chain
@@ -54,6 +56,7 @@ import {
   getStyleLearningState,
   setStyleLearningEnabled,
   deleteStyleLearningData,
+  getUnreflectedMinutesBadge,
 } from '@/server/style-profile'
 
 beforeEach(() => {
@@ -72,6 +75,7 @@ beforeEach(() => {
   })
   mocks.familiesUpdateResult.mockReturnValue({ error: null })
   mocks.userStylesDeleteResult.mockReturnValue({ error: null })
+  mocks.minutesSelectResult.mockReturnValue({ data: [], error: null })
 })
 
 describe('getStyleLearningState', () => {
@@ -152,5 +156,44 @@ describe('deleteStyleLearningData', () => {
     mocks.userStylesDeleteResult.mockReturnValue({ error: { message: 'db error' } })
     const result = await deleteStyleLearningData()
     expect(result).toEqual({ ok: false, code: 'DB_ERROR' })
+  })
+})
+
+describe('getUnreflectedMinutesBadge', () => {
+  it('未認証なら UNAUTHENTICATED を返す', async () => {
+    mocks.getUserMock.mockResolvedValue({ data: { user: null } })
+    const result = await getUnreflectedMinutesBadge()
+    expect(result).toEqual({ ok: false, code: 'UNAUTHENTICATED' })
+  })
+
+  it('family未所属なら NOT_IN_FAMILY を返す', async () => {
+    mocks.getSessionMock.mockResolvedValue({
+      data: { session: { access_token: 'no-family-token' } },
+    })
+    const result = await getUnreflectedMinutesBadge()
+    expect(result).toEqual({ ok: false, code: 'NOT_IN_FAMILY' })
+  })
+
+  it('プロファイル未生成（source_minutes_ids無し）で学習対象議事録5件以上なら shouldShowBadge:true', async () => {
+    mocks.userStylesSelectResult.mockResolvedValue({ data: null, error: null })
+    mocks.minutesSelectResult.mockReturnValue({
+      data: Array.from({ length: 5 }, (_, i) => ({ id: `m${i}` })),
+      error: null,
+    })
+    const result = await getUnreflectedMinutesBadge()
+    expect(result).toEqual({ ok: true, unreflectedCount: 5, shouldShowBadge: true })
+  })
+
+  it('source_minutes_ids に含まれる議事録は未反映カウントから除外され、閾値未満なら shouldShowBadge:false', async () => {
+    mocks.userStylesSelectResult.mockResolvedValue({
+      data: { source_minutes_ids: ['m0', 'm1'] },
+      error: null,
+    })
+    mocks.minutesSelectResult.mockReturnValue({
+      data: [{ id: 'm0' }, { id: 'm1' }, { id: 'm2' }],
+      error: null,
+    })
+    const result = await getUnreflectedMinutesBadge()
+    expect(result).toEqual({ ok: true, unreflectedCount: 1, shouldShowBadge: false })
   })
 })

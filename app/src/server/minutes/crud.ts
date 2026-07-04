@@ -6,6 +6,7 @@ import { createSupabaseServerClient } from '@/lib/supabase/server'
 import { createSupabaseServiceClient } from '@/lib/supabase/service'
 import { decodeAccessTokenClaims } from '@/lib/jwt-claims'
 import { regenerateMinutePdf } from '@/lib/pdf-output/regenerate-minute-pdf'
+import { maybeTriggerStyleProfile } from '@/lib/ai/style/maybe-trigger-style-profile'
 import {
   loadBuiltinBboxOverrides,
   resolveBuiltinBboxSlugFromProcessedPath,
@@ -147,6 +148,16 @@ export async function createMinute(input: CreateMinuteInput): Promise<{ id: stri
       reason: regen.reason,
     })
   }
+
+  // 学習対象議事録が閾値にちょうど到達したら、初回スタイルプロファイルを非同期 best-effort 生成する。
+  // 失敗しても議事録作成自体は既に成功しているため、応答をブロックしない。
+  void maybeTriggerStyleProfile({
+    db: svc,
+    familyId,
+    userId: user.id,
+    anthropicApiKey: process.env.ANTHROPIC_API_KEY,
+    anthropicModel: process.env.ANTHROPIC_MODEL,
+  })
 
   revalidatePath('/minutes')
   revalidatePath('/')

@@ -2,11 +2,16 @@
 
 import { createSupabaseServerClient } from '@/lib/supabase/server'
 import { decodeAccessTokenClaims } from '@/lib/jwt-claims'
-import { checkAiUsage, aiLimitExceededBody, logAiUsage } from '@/lib/ai-usage-guard'
+import { checkAiUsage, aiLimitExceededBody } from '@/lib/ai-usage-guard'
 import {
   buildStyleProfile,
   type BuildStyleProfileResult,
 } from '@/lib/ai/style/build-style-profile'
+import { logStyleProfileUsage } from '@/lib/ai/style/log-style-profile-usage'
+import {
+  countUnreflectedMinutes,
+  STYLE_UNREFLECTED_BADGE_THRESHOLD,
+} from '@/lib/ai/style/count-unreflected-minutes'
 
 /**
  * 家庭スタイルプロファイル生成 Server Action。
@@ -49,23 +54,7 @@ export async function regenerateStyleProfile(): Promise<
   })
 
   // best-effort ログ（プロファイル生成自体の成否に関わらず、AI 呼出コストは記録する）。
-  // skip 系（NO_MINUTES/EMPTY_CONTENT）は Anthropic 未呼出のためコスト 0 で記録。
-  const calledAi =
-    result.skippedReason !== 'NO_MINUTES' && result.skippedReason !== 'EMPTY_CONTENT'
-  if (calledAi) {
-    const inputTokens = result.usage?.inputTokens ?? 0
-    const outputTokens = result.usage?.outputTokens ?? 0
-    // Claude Haiku 3.5 estimate: input $3 / output $15 per 1M tokens.
-    const cost = (inputTokens * 3 + outputTokens * 15) / 1_000_000
-    void logAiUsage({
-      familyId,
-      userId: user.id,
-      endpoint: 'style-profile',
-      inputTokens,
-      outputTokens,
-      costUsdEstimate: cost,
-    })
-  }
+  void logStyleProfileUsage(result, { familyId, userId: user.id })
 
   return result
 }
@@ -135,6 +124,44 @@ export async function setStyleLearningEnabled(
   if (error) return { ok: false, code: 'DB_ERROR' }
 
   return { ok: true }
+}
+
+export type UnreflectedMinutesBadgeResult =
+  | { ok: true; unreflectedCount: number; shouldShowBadge: boolean }
+  | { ok: false; code: 'UNAUTHENTICATED' | 'NOT_IN_FAMILY' }
+
+/**
+ * 「新しい議事録から学び直せます」バッジ判定。
+ * user_styles.source_minutes_ids に含まれない学習対象議事録が閾値件数以上なら
+ * shouldShowBadge:true を返す。自動再生成はせず、UI 側の手動再生成導線に委ねる。
+ */
+export async function getUnreflectedMinutesBadge(): Promise<UnreflectedMinutesBadgeResult> {
+  const supabase = await createSupabaseServerClient()
+  const {
+    data: { user },
+  } = await supabase.auth.getUser()
+  if (!user) return { ok: false, code: 'UNAUTHENTICATED' }
+
+  const { data: sessionData } = await supabase.auth.getSession()
+  const familyId = decodeAccessTokenClaims(sessionData.session?.access_token)?.family_id
+  if (!familyId) return { ok: false, code: 'NOT_IN_FAMILY' }
+
+  const { data: styleRow } = await supabase
+    .from('user_styles')
+    .select('source_minutes_ids')
+    .eq('family_id', familyId)
+    .maybeSingle()
+
+  const { unreflectedCount, shouldShowBadge } = await countUnreflectedMinutes(
+    // count-unreflected-minutes.ts は from().select().eq().eq() のみを使う最小インタフェース
+    // なので、実クライアントは構造的に適合する。
+    supabase as unknown as Parameters<typeof countUnreflectedMinutes>[0],
+    familyId,
+    (styleRow?.source_minutes_ids as string[] | null) ?? [],
+    STYLE_UNREFLECTED_BADGE_THRESHOLD,
+  )
+
+  return { ok: true, unreflectedCount, shouldShowBadge }
 }
 
 /**
