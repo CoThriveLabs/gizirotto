@@ -21,7 +21,7 @@ interface Props {
  * 3 択 modal（再アップ / レイアウトなし出力（Phase 6+）/ デフォルト代用（Phase 6+））を表示。
  */
 export function OutputButtons({ minuteId, title, sourceFormat }: Props) {
-  const [downloading, setDownloading] = useState<'docx' | 'pdf' | null>(null)
+  const [downloading, setDownloading] = useState<'docx' | 'pdf' | 'image' | null>(null)
   const [errorMsg, setErrorMsg] = useState<string | null>(null)
   const [fallbackOpen, setFallbackOpen] = useState(false)
   const [fallbackMsg, setFallbackMsg] = useState<string | null>(null)
@@ -69,6 +69,45 @@ export function OutputButtons({ minuteId, title, sourceFormat }: Props) {
     }
   }
 
+  async function onDownloadImage() {
+    setDownloading('image')
+    setErrorMsg(null)
+    try {
+      const res = await fetch(`/api/minutes/${minuteId}/render-image`, {
+        method: 'POST',
+      })
+      if (!res.ok) {
+        const body: { message?: string } = await res.json().catch(() => ({}))
+        throw new Error(body.message ?? 'OUTPUT_FAILED')
+      }
+      const json: { signedUrl?: string; pages?: number } = await res.json()
+      if (!json.signedUrl) throw new Error('OUTPUT_FAILED')
+      // 単一ページ = {title}.png、複数ページ ZIP = {title}_画像.zip
+      const safeTitle = title || 'minutes'
+      const fileName =
+        (json.pages ?? 1) > 1 ? `${safeTitle}_画像.zip` : `${safeTitle}.png`
+      const a = document.createElement('a')
+      a.href = json.signedUrl
+      a.download = fileName
+      a.rel = 'noopener noreferrer'
+      a.click()
+    } catch (e) {
+      const serverMsg =
+        e instanceof Error && e.message && !e.message.includes('OUTPUT_FAILED')
+          ? e.message
+          : null
+      setErrorMsg(
+        serverMsg
+          ? containsJapanese(serverMsg)
+            ? serverMsg
+            : humanizeErrorCode(serverMsg).message
+          : '画像のダウンロードに失敗しました。少し時間を置いて再度お試しください。',
+      )
+    } finally {
+      setDownloading(null)
+    }
+  }
+
   return (
     <div className="flex flex-col gap-2 items-end">
       <div className="flex flex-wrap gap-2 justify-end">
@@ -89,14 +128,24 @@ export function OutputButtons({ minuteId, title, sourceFormat }: Props) {
           {downloading === 'pdf' ? '準備中…' : 'PDF でダウンロード'}
         </button>
         {sourceFormat === 'pdf' && (
-          <ImagePreviewButton
-            apiEndpoint={`/api/minutes/${minuteId}/render-image`}
-            buttonLabel="画像で見る/DL"
-            modalTitle={`${title} の画像プレビュー`}
-            showDownloadButton
-            downloadFileName={`${title || 'minutes'}.png`}
-            variant="secondary"
-          />
+          <>
+            <button
+              type="button"
+              onClick={onDownloadImage}
+              disabled={downloading !== null}
+              className="text-sm border border-gizirotto-blue-300 text-gizirotto-blue-700 px-3 py-2 rounded hover:bg-gizirotto-blue-50 disabled:opacity-50"
+            >
+              {downloading === 'image' ? '準備中…' : '画像でダウンロード'}
+            </button>
+            <ImagePreviewButton
+              apiEndpoint={`/api/minutes/${minuteId}/render-image`}
+              buttonLabel="画像で見る"
+              modalTitle={`${title} の画像プレビュー`}
+              showDownloadButton
+              downloadFileName={`${title || 'minutes'}.png`}
+              variant="secondary"
+            />
+          </>
         )}
       </div>
       {errorMsg && (

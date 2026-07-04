@@ -10,7 +10,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { renderHook, act } from '@testing-library/react'
 import { useMinuteAdjustEditor } from '@/hooks/editor/useMinuteAdjustEditor'
-import type { TemplateFieldDef } from '@/app/(dashboard)/minutes/[id]/adjust/AdjustView'
+import type { TemplateFieldDef } from '@/app/(dashboard)/minutes/[id]/adjust/adjust-view-helpers'
 import { PdfFieldSchemaZ, type PdfField } from '@/lib/ai/schemas/pdf-field-schema'
 import type { PageMeta } from '@/lib/pdf-output/bbox-coords'
 

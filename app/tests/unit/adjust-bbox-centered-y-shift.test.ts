@@ -26,7 +26,7 @@
  * required-bbox-height.ts A 式は触らない（mistake.md 6 維持）。
  */
 import { describe, it, expect } from 'vitest'
-import { computeBboxCenteredYShift } from '@/app/(dashboard)/minutes/[id]/adjust/AdjustView'
+import { computeBboxCenteredYShift } from '@/app/(dashboard)/minutes/[id]/adjust/adjust-view-helpers'
 
 describe('computeBboxCenteredYShift（D10: 拡張時のみ・縮小は 0）', () => {
   it('場所 field 想定: 素 bbox.h=14, requiredH=22 → shiftY=-4（上方向 shift で中央維持）', () => {

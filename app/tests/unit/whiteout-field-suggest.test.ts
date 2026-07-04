@@ -38,6 +38,10 @@ import {
   type FieldSuggestDiag,
 } from '@/lib/parsers/pdf/whiteout-pipeline'
 import {
+  type FieldBox,
+  type RasterPagePixels,
+} from '@/lib/parsers/pdf/field-bbox-detector'
+import {
   INSET_LEFT_PT,
   INSET_RIGHT_PT,
   INSET_TOP_PT,
@@ -48,9 +52,7 @@ import {
   LABEL_COLHIST_ZERO_MAX,
   VLINE_RESIDUE_RUN_RATIO,
   INK_MIN_COMPONENT,
-  type FieldBox,
-  type RasterPagePixels,
-} from '@/lib/parsers/pdf/field-bbox-detector'
+} from '@/lib/parsers/pdf/whiteout-constants'
 import type { LayoutCluster, LayoutCell } from '@/lib/parsers/pdf/layout-cluster'
 
 function makeCell(

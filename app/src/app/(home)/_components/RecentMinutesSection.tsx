@@ -1,3 +1,4 @@
+import Link from 'next/link'
 import { MinuteCard } from './MinuteCard'
 
 export type RecentMinute = {
@@ -28,12 +29,12 @@ export function RecentMinutesSection({
           最近の議事録
         </h2>
         {showAllLink && (
-          <a
+          <Link
             href="/minutes"
             className="text-sm text-gizirotto-blue-700 hover:underline"
           >
             全部見る →
-          </a>
+          </Link>
         )}
       </header>
 

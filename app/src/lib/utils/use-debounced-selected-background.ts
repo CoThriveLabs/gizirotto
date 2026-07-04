@@ -21,6 +21,12 @@ export interface UseDebouncedSelectedBackgroundOptions {
   debounceMs?: number
   /** test 用に注入可能 (default = globalThis.fetch) */
   fetchImpl?: (input: string, init?: RequestInit) => Promise<Response>
+  /**
+   * false の場合は fetch を一切行わず常に null を返す（既定 true）。
+   * guest-render は raw_except_selected を無視して常に同じ背景を返すため、selected 切替
+   * ごとの再取得に意味が無い（guest 経路ではこのフラグで丸ごと無効化する）。
+   */
+  enabled?: boolean
 }
 
 export function useDebouncedSelectedBackground({
@@ -28,11 +34,12 @@ export function useDebouncedSelectedBackground({
   selected,
   debounceMs = 300,
   fetchImpl,
+  enabled = true,
 }: UseDebouncedSelectedBackgroundOptions): string | null {
   const [bgUrl, setBgUrl] = useState<string | null>(null)
 
   useEffect(() => {
-    if (selected === null) {
+    if (!enabled || selected === null) {
       setBgUrl(null)
       return
     }
@@ -65,7 +72,7 @@ export function useDebouncedSelectedBackground({
       cancelled = true
       clearTimeout(timer)
     }
-  }, [selected, minuteId, debounceMs, fetchImpl])
+  }, [selected, minuteId, debounceMs, fetchImpl, enabled])
 
   return bgUrl
 }

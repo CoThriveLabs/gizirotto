@@ -24,9 +24,13 @@ export const SYSTEM_PROMPT_CHAT_A2 = `あなたは家族議事録作成を手伝
 
 export function buildSystemA2Suffix(args: {
   templateFields: Array<{ name: string; label: string }>
+  styleSummary?: string | null
 }): string {
   const fieldList = args.templateFields
     .map((f, i) => `${i + 1}. ${f.label}（${f.name}）`)
     .join('\n')
-  return `\n\n【議事録に揃えたい項目】\n${fieldList}`
+  const styleBlock = args.styleSummary
+    ? `\n\n【この家庭の書き方の傾向】\n${args.styleSummary}\n（この傾向を尊重しつつ、事実は足さない）`
+    : ''
+  return `\n\n【議事録に揃えたい項目】\n${fieldList}${styleBlock}`
 }

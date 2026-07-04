@@ -21,38 +21,18 @@
  */
 import { NextRequest, NextResponse } from 'next/server'
 import { createSupabaseServerClient } from '@/lib/supabase/server'
-import {
-  renderPdfToImages,
-  renderMinuteRawWithOverlayToImages,
-  renderMinuteBuiltinBgWithOverlayToImages,
-  getPdfNumPages,
-  type MinuteOverlayField,
-} from '@/lib/pdf-output/image-renderer'
 import { clampDpi } from '@/lib/pdf-output/dpi-downgrade'
-import type { WhiteoutBox } from '@/lib/parsers/pdf/whiteout-pipeline'
-import type { PdfField } from '@/lib/ai/schemas/pdf-field-schema'
-import type { FixedText } from '@/lib/pdf-output/fixedtext-adapter'
-import { fixedTextToPseudoFieldsByLines } from '@/lib/pdf-output/regenerate-minute-pdf'
 import { flattenContent } from '@/lib/utils/minutes-output'
-import {
-  buildOverlayFieldsForRender,
-  buildRawCacheSuffix,
-} from '@/lib/pdf-output/render-image-overlay-filter'
+import { buildRawCacheSuffix } from '@/lib/pdf-output/render-image-overlay-filter'
 import {
   mergeTemplateAndNewFields,
   parseNewFields,
 } from '@/lib/pdf-output/merge-template-and-new-fields'
-import { readUniformOverridePt } from '@/lib/pdf-output/uniform-override'
-import { parseFieldOverrides } from '@/lib/pdf-output/field-override'
-import { buildBuiltinEffectiveFields } from '@/lib/pdf-output/builtin-overlay-resolver'
-import { generateBlankA4Png } from '@/lib/pdf-output/blank-a4-png'
-import {
-  resolveBuiltinBboxSlugFromProcessedPath,
-  loadBuiltinThumbnailPng,
-  loadBuiltinBackgroundPng,
-  loadBuiltinPagePtSize,
-} from '@/lib/builtin-bbox-loader'
-import { errorResponse } from '@/lib/api/error-response'
+import type { TplRow, RenderSourceResult } from './render-source-types'
+import { resolveRawOverlayRender } from './render-source-raw-overlay'
+import { resolveBuiltinBgRender } from './render-source-builtin-bg'
+import { resolveFallbackRender } from './render-source-fallback'
+import { normalizeFields } from './render-image-helpers'
 
 export const runtime = 'nodejs'
 export const maxDuration = 30
@@ -187,19 +167,7 @@ export async function POST(
   //   ② それ以外で output_pdf_path がある → 従来 overlay PDF rasterize（後方互換）
   //   ③ template の background_pdf_path フォールバック（白塗りなし旧データ）
   //   ④ いずれも無理 → 404
-  let result: Awaited<ReturnType<typeof renderPdfToImages>>
 
-  type TplRow = {
-    id: string
-    family_id: string | null
-    background_pdf_path: string | null
-    source_path: string | null
-    source_format: string | null
-    processed_path: string | null
-    whiteout_boxes: unknown
-    fields: unknown
-    fixed_texts: unknown
-  }
   let template: TplRow | null = null
   if (minutes.template_id) {
     const { data: t } = await supabase
@@ -230,262 +198,49 @@ export async function POST(
   const canUseRawOverlay =
     !!template && !!template.source_path && hasAllBbox
 
+  let resolved: RenderSourceResult
   if (canUseRawOverlay) {
     // 案 A: raw 起点で純画像合成（A500 を構造的に回避）。
-    const { data: rawBlob, error: rawDlErr } = await supabase.storage
-      .from('templates_raw')
-      .download(template!.source_path as string)
-    if (rawDlErr || !rawBlob) {
-      return NextResponse.json({ error: 'PDF_DOWNLOAD_FAILED' }, { status: 500 })
-    }
-    const rawBytes = new Uint8Array(await rawBlob.arrayBuffer())
-
-    const whiteoutBoxes = Array.isArray(template!.whiteout_boxes)
-      ? (template!.whiteout_boxes as unknown as WhiteoutBox[])
-      : []
-    const fixedTexts = normalizeFixedTexts(template!.fixed_texts)
     const values = flattenContent(minutes.content_json)
-    const effectiveFields = applyBboxOverrides(tplFields, minutes.bbox_overrides)
-
-    // overlay-generator 経路と同じ「fixed text を疑似 PdfField 化」でフラット化する
-    // （2026-06-14 改訂：行展開廃止・元 ft.bbox 保持・改行分割は下流 layoutFixedTextLines が担う）。
-    // フィッティング・座標規約は共通。
-    //
-    // raw=true は記入値ゼロ背景を返すため、effectiveFields の値を一切 overlayFields に積まない
-    // （白塗り・固定テキスト・テンプレ自身のラベルだけ残る）。
-    // AdjustView は本背景の上にクライアント canvas で記入値を都度合成する。
-    //
-    // raw=true かつ raw_except_selected 指定時は指定 field 1 つだけスキップし、他 field は
-    // 通常どおり overlay に積む（「selected 以外は焼き込み済 PNG」+「selected は canvas 合成」）。
-    //
-    // 選別ロジックは buildOverlayFieldsForRender（pure・unit test 3 ケース回帰）に集約。
-    const overlayFields: MinuteOverlayField[] = buildOverlayFieldsForRender(
-      effectiveFields,
+    resolved = await resolveRawOverlayRender({
+      supabase,
+      template: template!,
+      tplFields,
       values,
+      bboxOverrides: minutes.bbox_overrides,
+      pageRange,
+      dpi,
+      format,
+      asZip,
       raw,
       rawExceptSelected,
-    )
-    // 固定テキスト WYSIWYG: 固定テキスト疑似 field 名を集め、image-renderer 内で fitTextInBox を
-    //   通さず共有純関数で top 揃え直描きさせる（サムネ・編集 canvas と同一式＝WYSIWYG）。
-    //   PDF 出力（overlay-generator）と一致。
-    const fixedTextNames = new Set<string>()
-    for (const ft of fixedTexts) {
-      const lineFields = fixedTextToPseudoFieldsByLines(ft)
-      for (const lf of lineFields) {
-        overlayFields.push({ field: lf.field, value: lf.value })
-        fixedTextNames.add(lf.field.name)
-      }
-    }
-
-    // 記入欄 field（effective）のみを uniform 対象に。固定テキスト疑似 field はテンプレ固有
-    //   サイズを保つため除外する。regenerate-minute-pdf.ts と同一の母集団・同一
-    //   computeUniformFontSize を通すことで、PDF 出力と詳細プレビュー画像の uniform を一致させる。
-    const uniformTargetNames = new Set(effectiveFields.map((f) => f.name))
-
-    // 全体の文字サイズ手動上書き:
-    //   bbox_overrides jsonb の予約キー `__uniform__` を読み取り、非 null なら snap を含む
-    //   自動算出をスキップして本値を採用する。PDF 出力（overlay-generator）と一致させる。
-    const uniformOverridePt =
-      readUniformOverridePt(parseFieldOverrides(minutes.bbox_overrides)) ?? undefined
-
-    try {
-      result = await renderMinuteRawWithOverlayToImages({
-        rawPdfBytes: rawBytes,
-        whiteoutBoxes,
-        overlayFields,
-        pageRange,
-        requestedDpi: dpi,
-        format,
-        asZip,
-        uniformTargetNames,
-        fixedTextNames,
-        uniformOverridePt,
-      })
-    } catch (err) {
-      return errorResponse('IMAGE_RENDER_FAILED', 500, err)
-    }
+    })
   } else if (template && template.source_format !== 'pdf') {
-    // builtin/docx 等の非 PDF テンプレ（source_format !== 'pdf'）は raw 起点経路に乗せられない
-    // 上、output_pdf_path（simple-pdf 生成）も pdfjs+napi-rs/canvas で
-    // 「Value is none of these types `String`, `Path`」エラーを発生させる
-    // （embedNotoSansCJKjp 由来の OTF を pdfjs が認識できない経路）。
-    //
-    // builtin テンプレ（family_id === null かつ processed_path が seed の slug いずれか）の
-    //   場合は `public/builtin-templates/{slug}.png`（テーブル/ラベル/罫線レイアウトを含む
-    //   サムネ PNG）を背景として返す。AdjustView はこの背景上に初期 bbox を重ねるため
-    //   「テンプレ既視感のあるレイアウト + bbox」の意図された見た目になる。
-    //
-    //   それ以外（user テンプレ docx 等、builtin slug 不一致）は白紙 A4 PNG fallback を温存。
-    //
-    // 値が 1 件でも入っている通常表示時は bg.png + overlay drawText を canvas 合成する
-    //   （raw=true は AdjustView 動的プレビュー用なので bg.png 直返しを維持）。
-    try {
-      let builtinPngBytes: Uint8Array | null = null
-      let builtinSlug: ReturnType<typeof resolveBuiltinBboxSlugFromProcessedPath> = null
-      if (template.family_id === null) {
-        builtinSlug = resolveBuiltinBboxSlugFromProcessedPath(template.processed_path)
-        if (builtinSlug) {
-          // 背景用 PNG（`{slug}.bg.png`・値セル空白）を優先採用。
-          //   サムネ `{slug}.png`（ダミー値入り）を背景に流用するとユーザー入力値と
-          //   二重表示される UX バグになる。背景 PNG が無い場合（コミット漏れ等の保険）は
-          //   サムネ PNG にフォールバック → 最後は白紙 A4。
-          builtinPngBytes =
-            (await loadBuiltinBackgroundPng(builtinSlug)) ??
-            (await loadBuiltinThumbnailPng(builtinSlug))
-        }
-      }
-
-      // bg.png 取得済 + raw=false（通常表示・詳細画面）+ builtin slug 有効の場合に overlay
-      //   合成を試みる。raw=true は AdjustView の動的プレビュー用なので「記入値ゼロ背景」を
-      //   返す既存契約を維持。
-      if (builtinPngBytes && !raw && builtinSlug !== null) {
-        const pagePtSize = await loadBuiltinPagePtSize(builtinSlug)
-        const dbOverrides = parseFieldOverrides(minutes.bbox_overrides)
-        // builtin tplFields は seed.sql 由来で bbox を持たないので、bbox は dbOverrides
-        //   （ユーザー編集差分・最優先）→ bbox JSON fallback（builtin 初期値）の順で補完。
-        //   user テンプレ raw 経路の applyBboxOverrides と式同型（builtin 仕様の equivalent）。
-        const { loadBuiltinBboxOverrides: loadBboxFromJson } = await import(
-          '@/lib/builtin-bbox-loader'
-        )
-        const fallbackFromJson = await loadBboxFromJson(builtinSlug)
-        const effectiveFields = buildBuiltinEffectiveFields({
-          tplFields,
-          dbOverrides,
-          fallbackFromJson,
-        })
-
-        const valuesMap = flattenContent(minutes.content_json)
-        const overlayFields: MinuteOverlayField[] = []
-        for (const f of effectiveFields) {
-          const v = valuesMap[f.name]
-          if (v === undefined || v === null) continue
-          const text = String(v)
-          if (text.length === 0) continue
-          overlayFields.push({ field: f, value: text })
-        }
-
-        // 値 1 件以上 + pagePtSize 確定時のみ合成。失敗時は bg.png に退避（安全側）。
-        if (overlayFields.length > 0 && pagePtSize) {
-          const uniformTargetNames = new Set(effectiveFields.map((f) => f.name))
-          const uniformOverridePt =
-            readUniformOverridePt(dbOverrides) ?? undefined
-          try {
-            result = await renderMinuteBuiltinBgWithOverlayToImages({
-              bgPngBytes: builtinPngBytes,
-              pagePtSize,
-              overlayFields,
-              requestedDpi: dpi,
-              format,
-              uniformTargetNames,
-              fixedTextNames: undefined,
-              uniformOverridePt,
-            })
-          } catch (err) {
-            // サイレント退避で「値が見えない」現象を引き起こす経路。
-            //   error 格上げ + stack 出力で再現時に真因を確実に拾えるようにする。
-            //   bg.png 退避自体は据置（詳細画面を真っ白にしないための安全網）。
-            console.error(
-              '[render-image] builtin overlay composite FAILED → fallback to bg.png',
-              {
-                minuteId: minutesId,
-                slug: builtinSlug,
-                overlayFieldsCount: overlayFields.length,
-                pagePtSize,
-                message: err instanceof Error ? err.message : String(err),
-                stack: err instanceof Error ? err.stack : undefined,
-              },
-            )
-            result = {
-              bytes: builtinPngBytes,
-              contentType: 'image/png',
-              ext: 'png',
-              dpiDecision: { dpi, downgraded: false, estimatedMs: 0 },
-              renderedPages: 1,
-              warnings: [],
-            }
-          }
-        } else {
-          // 値ゼロ or pagePtSize 取得失敗 → bg.png 直返し（既存挙動）。
-          result = {
-            bytes: builtinPngBytes,
-            contentType: 'image/png',
-            ext: 'png',
-            dpiDecision: { dpi, downgraded: false, estimatedMs: 0 },
-            renderedPages: 1,
-            warnings: [],
-          }
-        }
-      } else if (builtinPngBytes) {
-        // raw=true or slug 未解決 → bg.png 直返し（既存挙動）。
-        result = {
-          bytes: builtinPngBytes,
-          contentType: 'image/png',
-          ext: 'png',
-          dpiDecision: { dpi, downgraded: false, estimatedMs: 0 },
-          renderedPages: 1,
-          warnings: [],
-        }
-      } else {
-        const blank = await generateBlankA4Png(dpi)
-        result = {
-          bytes: blank.bytes,
-          contentType: 'image/png',
-          ext: 'png',
-          dpiDecision: { dpi, downgraded: false, estimatedMs: 0 },
-          renderedPages: 1,
-          warnings: [],
-        }
-      }
-    } catch (err) {
-      return errorResponse('IMAGE_RENDER_FAILED', 500, err)
-    }
+    resolved = await resolveBuiltinBgRender({
+      template,
+      tplFields,
+      bboxOverrides: minutes.bbox_overrides,
+      contentJson: minutes.content_json,
+      minutesId,
+      dpi,
+      format,
+      raw,
+    })
   } else {
     // フォールバック経路（後方互換）。output_pdf_path → background_pdf_path → 404。
-    const pdfPath = (minutes.output_pdf_path as string | null) ?? null
-    let pdfBucket: 'minutes_output' | 'templates_processed'
-    let pdfStoragePath: string
-    if (pdfPath) {
-      pdfBucket = 'minutes_output'
-      pdfStoragePath = pdfPath
-    } else if (template?.background_pdf_path) {
-      pdfBucket = 'templates_processed'
-      pdfStoragePath = template.background_pdf_path
-    } else {
-      return NextResponse.json(
-        { error: 'PDF_SOURCE_NOT_AVAILABLE' },
-        { status: 404 },
-      )
-    }
-
-    const { data: pdfBlob, error: dlErr } = await supabase.storage
-      .from(pdfBucket)
-      .download(pdfStoragePath)
-    if (dlErr || !pdfBlob) {
-      return NextResponse.json({ error: 'PDF_DOWNLOAD_FAILED' }, { status: 500 })
-    }
-    const pdfBytes = new Uint8Array(await pdfBlob.arrayBuffer())
-
-    let totalPages: number
-    try {
-      totalPages = await getPdfNumPages(pdfBytes)
-    } catch {
-      return NextResponse.json({ error: 'PDF_NUMPAGES_FAILED' }, { status: 500 })
-    }
-
-    try {
-      result = await renderPdfToImages({
-        pdfBytes,
-        totalPages,
-        pageRange,
-        requestedDpi: dpi,
-        format,
-        asZip,
-        forceDpi,
-      })
-    } catch (err) {
-      return errorResponse('IMAGE_RENDER_FAILED', 500, err)
-    }
+    resolved = await resolveFallbackRender({
+      supabase,
+      outputPdfPath: (minutes.output_pdf_path as string | null) ?? null,
+      template,
+      pageRange,
+      dpi,
+      format,
+      asZip,
+      forceDpi,
+    })
   }
+  if (!resolved.ok) return resolved.response
+  const result = resolved.result
 
   // image_cache 保存（§5-5、§6-7-a）
   // 失敗しても応答は返す（次回 miss してまた生成するだけ）
@@ -517,48 +272,4 @@ export async function POST(
     },
     { status: 200 },
   )
-}
-
-// ─────────────────────────────────────────────────────────────────────
-// Helpers（regenerate-minute-pdf.ts 同梱版のサーバ限定再利用。クライアント共有純
-// 関数とは同居させない・mistake.md 2026-06-06 違反事例を踏まないため route.ts 内に閉じる）。
-// ─────────────────────────────────────────────────────────────────────
-
-function normalizeFields(raw: unknown): PdfField[] {
-  if (!raw) return []
-  const arr: unknown = Array.isArray(raw)
-    ? raw
-    : typeof raw === 'object'
-      ? (raw as { fields?: unknown }).fields
-      : null
-  if (!Array.isArray(arr)) return []
-  return arr.filter(
-    (f): f is PdfField =>
-      !!f &&
-      typeof f === 'object' &&
-      typeof (f as { name?: unknown }).name === 'string',
-  ) as PdfField[]
-}
-
-function normalizeFixedTexts(raw: unknown): FixedText[] {
-  if (!Array.isArray(raw)) return []
-  return raw.filter(
-    (ft): ft is FixedText =>
-      !!ft &&
-      typeof ft === 'object' &&
-      typeof (ft as { name?: unknown }).name === 'string' &&
-      typeof (ft as { value?: unknown }).value === 'string' &&
-      !!(ft as { bbox?: unknown }).bbox &&
-      typeof (ft as { bbox: { page?: unknown } }).bbox.page === 'number',
-  )
-}
-
-function applyBboxOverrides(fields: PdfField[], overrides: unknown): PdfField[] {
-  if (!overrides || typeof overrides !== 'object') return fields
-  const ov = overrides as Record<string, { x?: unknown; y?: unknown }>
-  return fields.map((f) => {
-    const o = ov[f.name]
-    if (!o || typeof o.x !== 'number' || typeof o.y !== 'number') return f
-    return { ...f, bbox: { ...f.bbox, x: o.x, y: o.y } }
-  })
 }

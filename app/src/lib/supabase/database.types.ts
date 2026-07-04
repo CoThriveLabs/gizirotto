@@ -101,6 +101,7 @@ export type Database = {
           invite_code: string
           invite_code_expires_at: string
           name: string
+          style_learning_enabled: boolean
         }
         Insert: {
           created_at?: string
@@ -108,6 +109,7 @@ export type Database = {
           invite_code: string
           invite_code_expires_at?: string
           name: string
+          style_learning_enabled?: boolean
         }
         Update: {
           created_at?: string
@@ -115,6 +117,7 @@ export type Database = {
           invite_code?: string
           invite_code_expires_at?: string
           name?: string
+          style_learning_enabled?: boolean
         }
         Relationships: []
       }

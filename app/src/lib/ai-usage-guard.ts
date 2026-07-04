@@ -94,6 +94,7 @@ export async function logAiUsage(params: {
     | 'chat-stream'
     | 'whiteout-preview'
     | 'whiteout-apply'
+    | 'style-profile'
   inputTokens?: number
   outputTokens?: number
   costUsdEstimate?: number

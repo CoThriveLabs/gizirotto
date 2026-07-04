@@ -14,11 +14,9 @@
  *   pending 据え置きを根絶し、on-demand 自動 trigger 対象から外す。
  */
 import type { SupabaseClient } from '@supabase/supabase-js'
-import {
-  renderMinuteRawWithOverlayToImages,
-  renderMinuteBuiltinBgWithOverlayToImages,
-  type MinuteOverlayField,
-} from './image-renderer'
+import { renderMinuteRawWithOverlayToImages } from './image-render-raw-overlay'
+import { renderMinuteBuiltinBgWithOverlayToImages } from './image-renderer'
+import { type MinuteOverlayField } from './image-render-overlay-shared'
 import type { WhiteoutBox } from '@/lib/parsers/pdf/whiteout-pipeline'
 import type { PdfField } from '../ai/schemas/pdf-field-schema'
 import type { FixedText } from './fixedtext-adapter'

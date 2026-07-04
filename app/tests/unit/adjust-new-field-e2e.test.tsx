@@ -116,7 +116,7 @@ vi.mock('@/app/(dashboard)/templates/[id]/bbox-pane', () => {
 })
 
 import { AdjustView } from '@/app/(dashboard)/minutes/[id]/adjust/AdjustView'
-import type { TemplateFieldDef } from '@/app/(dashboard)/minutes/[id]/adjust/AdjustView'
+import type { TemplateFieldDef } from '@/app/(dashboard)/minutes/[id]/adjust/adjust-view-helpers'
 import { PdfFieldSchemaZ, type PdfField } from '@/lib/ai/schemas/pdf-field-schema'
 
 function makeTemplateField(name: string, label: string): TemplateFieldDef {

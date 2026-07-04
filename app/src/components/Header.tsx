@@ -2,7 +2,7 @@
 
 import Image from 'next/image'
 import Link from 'next/link'
-import { MemberAvatar } from '@/components/MemberAvatar'
+import { HeaderAccountMenu } from '@/components/HeaderAccountMenu'
 
 /**
  * 全ページ共通ヘッダー。
@@ -51,13 +51,22 @@ export function Header({
               {familyName}
             </span>
           )}
-          <Link
-            href="/members"
-            aria-label={displayName ? `${displayName} の家族メンバー画面へ` : '家族メンバー'}
-            className="rounded-full hover:opacity-80 shrink-0"
-          >
-            <MemberAvatar displayName={displayName} size="sm" />
-          </Link>
+          {displayName ? (
+            <HeaderAccountMenu
+              displayName={displayName}
+              familyName={familyName}
+            />
+          ) : (
+            // 未ログイン時はアバターの代わりにログイン誘導リンクを出す。
+            // ログイン後にホームへ戻る挙動を保つため next=/ を明示。
+            <Link
+              href="/login?next=/"
+              aria-label="ログイン画面へ移動"
+              className="text-sm font-medium text-gizirotto-blue-700 hover:text-gizirotto-blue-900 hover:underline shrink-0"
+            >
+              ログイン
+            </Link>
+          )}
         </div>
       </div>
     </header>

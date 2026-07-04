@@ -15,7 +15,7 @@
  * 「動的プレビューは位置・大きさ・折返しの近似」（field 単位独立であるべき）。
  */
 import { describe, it, expect } from 'vitest'
-import { computePreviewFontSize } from '@/app/(dashboard)/minutes/[id]/adjust/AdjustView'
+import { computePreviewFontSize } from '@/app/(dashboard)/minutes/[id]/adjust/adjust-view-helpers'
 
 describe('computePreviewFontSize', () => {
   it('override.fontSize 指定で bbox.h * 0.7 を下回るときは override 値を使う', () => {

@@ -23,7 +23,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import {
   applyBboxFlushUpdates,
   type TemplateFieldDef,
-} from '@/app/(dashboard)/minutes/[id]/adjust/AdjustView'
+} from '@/app/(dashboard)/minutes/[id]/adjust/adjust-view-helpers'
 import type { BboxOverrides } from '@/lib/pdf-output/field-override'
 
 const FIELDS: TemplateFieldDef[] = [

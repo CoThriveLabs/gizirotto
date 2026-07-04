@@ -20,8 +20,8 @@ node_modules/
 
 # 知人サンプル PDF / 個人情報含む可能性のあるデータ（仕様書 v1.6.1 §0-3.5 / mistake.md）
 # Phase 2.5 フィクスチャ用途のみ。AI 学習・git コミット・PF 公開のいずれも不可
-# Public PF: app/sample/ 全除外（.gitkeep の例外復活も無し）
 app/sample/*.pdf
+!app/sample/.gitkeep
 app/sample/**/*.pdf
 
 # 中間検証成果物（知人 PDF 由来データを含む可能性あり、安全側で全除外）
@@ -99,6 +99,3 @@ app/supabase/.branches/
 
 # 未確定の draft 設定（条件付き LFS 運用メモ・内部参照含む）
 /app/.gitattributes.draft
-
-# Public PF: exclude internal sample assets entirely
-app/sample/

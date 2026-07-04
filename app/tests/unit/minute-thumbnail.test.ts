@@ -20,7 +20,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
  */
 
 const renderMock = vi.fn()
-vi.mock('@/lib/pdf-output/image-renderer', () => ({
+vi.mock('@/lib/pdf-output/image-render-raw-overlay', () => ({
   renderMinuteRawWithOverlayToImages: (...args: unknown[]) => renderMock(...args),
 }))
 

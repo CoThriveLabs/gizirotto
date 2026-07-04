@@ -7,7 +7,7 @@ export const metadata: Metadata = {
 }
 
 /**
- * 利用規約ページ (v1.0.1)。
+ * 利用規約ページ (v1.0.2)。
  * docs/drafts/terms-of-service-2026-06-15.md を TSX 化したもの。
  * 内容を変更した場合は src/lib/legal/versions.ts の TERMS_VERSION も更新すること。
  */
@@ -21,8 +21,8 @@ export default function TermsPage() {
         operator="Co-Thrive Labs（運営者: 倉西 斗夢）"
         contact="contact@cothrivelabs.com"
         enacted="2026-06-15"
-        updated="2026-06-15"
-        version="1.0.1"
+        updated="2026-07-04"
+        version="1.0.2"
       />
 
       <hr />
@@ -54,9 +54,9 @@ export default function TermsPage() {
         <li>アカウントの管理責任は利用者自身が負うものとし、第三者への譲渡・貸与・共有は禁止します（同一家庭内のメンバー追加機能を除く）。</li>
         <li>当方は、不正アクセスや不正利用が疑われる場合、事前通知なくアカウントを停止することがあります。</li>
         <li>
-          <strong>アカウント削除について</strong>: 利用者自身によるアカウント削除機能は今後実装予定です。それまでは{' '}
+          <strong>アカウント削除について</strong>: 利用者は、設定画面からご自身でアカウントを削除できます。削除時に消去されるデータの範囲・保持されるデータの詳細は、利用者が所属する家庭（世帯）の構成により異なるため、プライバシーポリシー第 9.3 条をご参照ください。設定画面からの操作が難しい場合は、{' '}
           <a href="mailto:contact@cothrivelabs.com">contact@cothrivelabs.com</a>{' '}
-          までご連絡いただければ、当方にて手動で対応いたします。
+          までご連絡いただければ、当方にて対応いたします。
         </li>
       </ol>
 
@@ -183,9 +183,10 @@ export default function TermsPage() {
       </p>
       <ul>
         <li>制定日: 2026-06-15</li>
-        <li>最終更新: 2026-06-15</li>
-        <li>バージョン: 1.0.1</li>
+        <li>最終更新: 2026-07-04</li>
+        <li>バージョン: 1.0.2</li>
         <li>1.0 → 1.0.1: アカウント削除機能の暫定運用（contact@ 経由の手動対応）を第4条 4 項として明記</li>
+        <li>1.0.1 → 1.0.2: 利用者自身によるアカウント削除機能の実装に伴い第4条 4 項を更新</li>
       </ul>
     </LegalLayout>
   )

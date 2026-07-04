@@ -131,6 +131,70 @@ export async function regenerateInviteCode(): Promise<RegenerateInviteCodeResult
   return { ok: false, code: 'NETWORK_ERROR' }
 }
 
+/**
+ * メンバーを管理者へ昇格させる (Q-2 退会フローのケース B 救済導線)。
+ *
+ * 二重防御:
+ * 1. 呼出元が当該 family の admin であることを Server Action 層で確認
+ * 2. UPDATE 条件で family_id + memberId を絞り込み (誤爆防止)
+ *
+ * 注意: 降格 (admin → member) は本案件スコープ外。
+ */
+export type PromoteResult =
+  | { ok: true }
+  | {
+      ok: false
+      code:
+        | 'UNAUTHENTICATED'
+        | 'NOT_IN_FAMILY'
+        | 'NOT_ADMIN'
+        | 'TARGET_NOT_IN_FAMILY'
+        | 'ALREADY_ADMIN'
+        | 'DB_ERROR'
+    }
+
+export async function promoteMemberToAdmin(
+  memberId: string,
+): Promise<PromoteResult> {
+  const supabase = await createSupabaseServerClient()
+  const {
+    data: { user },
+  } = await supabase.auth.getUser()
+  if (!user) return { ok: false, code: 'UNAUTHENTICATED' }
+
+  const { data: { session } } = await supabase.auth.getSession()
+  const familyId = decodeAccessTokenClaims(session?.access_token)?.family_id
+  if (!familyId) return { ok: false, code: 'NOT_IN_FAMILY' }
+
+  const { data: meRow } = await supabase
+    .from('family_members')
+    .select('role')
+    .eq('family_id', familyId)
+    .eq('user_id', user.id)
+    .maybeSingle()
+  if (meRow?.role !== 'admin') return { ok: false, code: 'NOT_ADMIN' }
+
+  const { data: targetRow, error: targetErr } = await supabase
+    .from('family_members')
+    .select('user_id, role')
+    .eq('family_id', familyId)
+    .eq('user_id', memberId)
+    .maybeSingle()
+  if (targetErr) return { ok: false, code: 'DB_ERROR' }
+  if (!targetRow) return { ok: false, code: 'TARGET_NOT_IN_FAMILY' }
+  if (targetRow.role === 'admin') return { ok: false, code: 'ALREADY_ADMIN' }
+
+  const { error: updErr } = await supabase
+    .from('family_members')
+    .update({ role: 'admin' })
+    .eq('family_id', familyId)
+    .eq('user_id', memberId)
+  if (updErr) return { ok: false, code: 'DB_ERROR' }
+
+  revalidatePath('/members')
+  return { ok: true }
+}
+
 /* ------------------------------------------------------------------ */
 /* internal helpers (non-export, 'use server' ファイル内で許容される)    */
 /* ------------------------------------------------------------------ */

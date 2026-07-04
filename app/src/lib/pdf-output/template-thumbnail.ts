@@ -10,7 +10,7 @@
  * 失敗してもサムネ status を 'failed' に記録するのみで throw しない（upload を落とさない）。
  */
 import type { SupabaseClient } from '@supabase/supabase-js'
-import { renderPdfToImages, getPdfNumPages } from './image-renderer'
+import { renderPdfToImages, getPdfNumPages } from './image-render-worker'
 import { renderPdfPagesToPng } from '@/lib/parsers/pdf/pdf-page-rasterizer'
 import { compositeWhiteoutOnPng } from '@/lib/parsers/pdf/whiteout-composite'
 import type { WhiteoutBox } from '@/lib/parsers/pdf/whiteout-pipeline'

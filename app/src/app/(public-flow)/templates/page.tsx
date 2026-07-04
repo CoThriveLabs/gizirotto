@@ -1,9 +1,7 @@
-import { headers } from 'next/headers'
-import { redirect } from 'next/navigation'
 import { listTemplatesWithThumbs } from '@/server/templates'
 import { createSupabaseServerClient } from '@/lib/supabase/server'
-import { TemplateGrid } from './_components/TemplateGrid'
-import type { TemplateCardData, TemplateCardMode } from './_components/TemplateCard'
+import { TemplateGrid } from '@/app/(dashboard)/templates/_components/TemplateGrid'
+import type { TemplateCardData, TemplateCardMode } from '@/app/(dashboard)/templates/_components/TemplateCard'
 import ErrorNotice from '@/components/error-notice'
 
 export const dynamic = 'force-dynamic'
@@ -60,16 +58,15 @@ export default async function TemplatesPage({
   searchParams: Promise<SearchParams>
 }) {
   const params = await searchParams
-  const hdrs = await headers()
-  const familyId = hdrs.get('x-family-id')
-  if (!familyId) redirect('/family/setup')
 
   const supabase = await createSupabaseServerClient()
   const {
     data: { user },
   } = await supabase.auth.getUser()
-  if (!user) redirect('/login')
 
+  // 未ログイン時は builtin テンプレのみ取得（RLS で family_id IS NULL のもの）。
+  // ログイン済みでも listTemplatesWithThumbs は同 supabase client 経由で
+  // RLS に従い family テンプレを返す。
   let templatesRaw: Awaited<ReturnType<typeof listTemplatesWithThumbs>> = []
   let errorMsg: string | null = null
   try {
@@ -94,7 +91,9 @@ export default async function TemplatesPage({
   })
 
   const samples = all.filter((t) => t.is_default)
-  const customs = all.filter((t) => !t.is_default)
+  // 未ログイン時は family テンプレが RLS で返らないため空配列になる。
+  // ログイン済みでも表示するが、未ログイン時は TemplateGrid に渡さない。
+  const customs = user ? all.filter((t) => !t.is_default) : []
 
   const mode: TemplateCardMode = params.from === 'cta' ? 'select' : 'manage'
   const intent: 'ai' | 'manual' = params.intent === 'manual' ? 'manual' : 'ai'
@@ -123,6 +122,7 @@ export default async function TemplatesPage({
           mode={mode}
           intent={intent}
           spSection={spSection}
+          isAuthenticated={!!user}
         />
       )}
     </div>

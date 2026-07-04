@@ -13,7 +13,7 @@
  *   - 既存 field の削除: newFieldNames は不変（既存 field は newFieldNames に居ない）
  */
 import { describe, it, expect } from 'vitest'
-import type { TemplateFieldDef } from '@/app/(dashboard)/minutes/[id]/adjust/AdjustView'
+import type { TemplateFieldDef } from '@/app/(dashboard)/minutes/[id]/adjust/adjust-view-helpers'
 import type { BboxOverrides } from '@/lib/pdf-output/field-override'
 
 type MinutesEditSnapshot = {

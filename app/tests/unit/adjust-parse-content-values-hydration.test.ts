@@ -21,7 +21,7 @@
  */
 import { describe, it, expect } from 'vitest'
 import { parseContentValues } from '@/app/(dashboard)/minutes/[id]/adjust/page'
-import type { TemplateFieldDef } from '@/app/(dashboard)/minutes/[id]/adjust/AdjustView'
+import type { TemplateFieldDef } from '@/app/(dashboard)/minutes/[id]/adjust/adjust-view-helpers'
 
 function f(name: string, label = name): TemplateFieldDef {
   return { name, label, bbox: { x: 0, y: 0, w: 100, h: 20 }, multiline: false }

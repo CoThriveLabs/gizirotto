@@ -23,7 +23,7 @@
  *   - D11 親 RAF 間引きロジックは据置
  */
 import { describe, it, expect } from 'vitest'
-import { resolveWhiteoutRawImageUrl } from '@/app/(dashboard)/minutes/[id]/adjust/AdjustView'
+import { resolveWhiteoutRawImageUrl } from '@/app/(dashboard)/minutes/[id]/adjust/adjust-view-helpers'
 
 describe('resolveWhiteoutRawImageUrl（D12 案 D 案）', () => {
   describe('isDragging=true（drag 中・案 D OFF）', () => {
