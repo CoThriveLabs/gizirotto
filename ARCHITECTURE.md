@@ -135,7 +135,56 @@ WYSIWYG エディタの中核は、複数レイヤ（フィールド・白塗り
 
 ---
 
-## 8. AI 利用ガイド
+## 8. セキュリティ設計
+
+Gizirotto は家庭の個人情報（家族構成・予定・家計など）を扱うため、認証・入力検証・API 保護・レスポンスヘッダの各レイヤで多層防御を組んでいます。以下は現時点の実装を層ごとに整理したものです。
+
+### 8.1 認証・認可（世帯単位のデータ分離）
+
+- Supabase Auth + Row Level Security（RLS）により、世帯（`family_id`）単位のデータ分離を **DB レイヤーで強制**しています。アプリ側のロジックミスがあっても、他世帯のデータには到達できません。
+- policy は verb（SELECT / INSERT / UPDATE / DELETE）別に個別定義しています。`FOR ALL` の 1 本化は UPDATE / INSERT の post-condition（更新後の値チェック）を縛れないため避け、判定式は一貫して `family_id = (auth.jwt() ->> 'family_id')::uuid` を使っています。UPDATE policy は `USING`（更新前行の可視性）と `WITH CHECK`（更新後行の許可）の両方を指定し、別世帯の `family_id` へ書き換える詐取攻撃を防いでいます。
+- `family_id` は Supabase の `custom_access_token_hook` により JWT claims へ注入されます。クライアントは `auth.getUser()` で署名検証済みの session から `access_token` を取得し、そのペイロードを base64url decode して自世帯の `family_id` のみを取り出します。
+- なお `user.app_metadata` は使いません。これは `raw_app_meta_data` 列の中身であり、hook の注入先（JWT claims）とは別管理のためです。
+- アカウント削除時は、DB 側は外部キー CASCADE で関連行を連鎖削除し、Storage 側は 4 bucket（`templates_raw` / `templates_processed` / `image_cache` / `minutes_output`）を明示的に全削除します。削除フローは世帯構成に応じて 3 ケースに分岐します（唯一メンバーの場合は世帯ごと全削除／他メンバーがいる唯一の管理者の場合はブロックして退会させない／他メンバーがいる一般メンバーの場合は自分の関連データのみ削除し共有データは保持）。ケース判定はクライアント申告を信用せず、サーバ側で再検証します。
+
+### 8.2 Bot 対策
+
+- 認証・ゲスト経路に Cloudflare Turnstile（invisible widget）を配置しています。
+- フロントのトークンだけを信用せず、サーバ側で Cloudflare の siteverify API による再検証を行う二段検証構成です。
+- テストキーのハードコードやフォールバックは実装していません。`TURNSTILE_SECRET_KEY` が未設定の環境（ローカル開発など）では検証を skip する設計です。本番運用では Vercel の環境変数に `TURNSTILE_SECRET_KEY` を必ず設定し、検証が有効化された状態で稼働させる運用を前提としています。テストキーへの自動フォールバックは意図的に排除しています。
+
+### 8.3 API 過剰利用・DoS 対策
+
+- **quota チェック**: `ai_usage_exceeded` RPC で world / family / user の 3 階層から AI 呼び出し回数を確認します。RPC 呼び出し自体が失敗した場合は **fail-closed**（ブロック側に倒す）とし、公開後の暴走課金を防いでいます。
+- **レート制限**（Upstash Redis の sliding window、独立した 3 種類）:
+  - バースト制限: 既定 10 req / 10s / IP（middleware で `/api/*` 全経路に適用）
+  - ゲスト AI daily 制限: 既定 20 req / 1d / IP（AI 呼び出し暴発防御・DoS 対策。議事録 1 件あたり約 10 request × 2 件分を想定）
+  - ゲスト議事録件数制限: 既定 2 件 / 1d / IP（無限試用の防止。AdjustView 到達時に 1 回消費）
+  - 既定値は環境変数（`GUEST_AI_DAILY_LIMIT_COUNT` / `GUEST_AI_DAILY_LIMIT_WINDOW` / `GUEST_TEMPLATE_LIMIT_COUNT` / `GUEST_TEMPLATE_LIMIT_WINDOW` 等）で調整可能です。
+- **本番未設定時は fail-closed**: 本番ランタイムで Upstash の環境変数が未設定の場合は起動時にエラーで落とし、silent にレート制限なしへフォールバックしない設計です（開発・CI 環境では noop として動作し、既存挙動を壊しません）。
+- **CORS**: `ALLOWED_ORIGINS` で許可オリジンを明示し、未設定であれば許可オリジン無し（fail-safe）として扱います。
+- **不正シグナル記録**: `signup_attempts` / `abuse_alerts` / `reset_requests` テーブルで、不審なサインアップやリソース作成の兆候を追跡します。
+- **AI 使用量ログ**: `ai_usage_log` に endpoint・入力/出力トークン数・推定コストを記録し、事後監査を可能にしています。
+
+### 8.4 セキュリティヘッダ
+
+`next.config.mjs` の `headers()` で全レスポンスに以下を付与しています。
+
+- HSTS（`Strict-Transport-Security`）
+- `X-Frame-Options: DENY`
+- `Referrer-Policy: strict-origin-when-cross-origin`
+- `Permissions-Policy`
+- `Content-Security-Policy` は現在 Report-Only（`Content-Security-Policy-Report-Only`）で本番稼働中です。違反レポートを一定期間観測したうえで、強制モードへ昇格する移行計画です。
+
+### 8.5 その他
+
+- API キー・シークレット・接続情報はすべて `.env` 経由で管理し、コードへの直書きはありません。
+- 依存パッケージの更新は Dependabot（monthly + セキュリティ更新のみ）で行っています。
+- 脆弱性報告の窓口は GitHub の Private Vulnerability Reporting、または contact 用メールです（[SECURITY.md](./.github/SECURITY.md)）。
+
+---
+
+## 9. AI 利用ガイド
 
 - **プロンプト設計**: 用途別（チャット支援・整形など）にプロンプトを分離して管理しています。
 - **構造化出力**: Claude の構造化出力を使い、議事録フィールドを安定した形式で取得します。
@@ -146,7 +195,7 @@ API キーや環境変数の実値はリポジトリに含めません。`.env.e
 
 ---
 
-## 9. 開発・公開ポリシー
+## 10. 開発・公開ポリシー
 
 - **Issue 対応**: best-effort（個人開発のため SLA はありません）。
 - **外部 Pull Request**: 現状は受け付けていません（[CONTRIBUTING.md](./.github/CONTRIBUTING.md) 参照）。
