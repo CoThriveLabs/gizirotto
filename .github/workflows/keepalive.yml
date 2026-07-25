@@ -1,0 +1,40 @@
+name: keepalive
+
+# ping.yml はアプリ経由(production専用)、こちらは Supabase REST 直叩き(production+staging)
+on:
+  schedule:
+    - cron: '0 3 * * 4' # 毎週木曜 03:00 UTC
+  workflow_dispatch:
+
+jobs:
+  ping-production:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Curl Supabase REST (production)
+        env:
+          SUPABASE_URL: ${{ vars.SUPABASE_PROD_URL }}
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_PROD_ANON_KEY }}
+        run: |
+          if [ -z "$SUPABASE_URL" ]; then
+            echo "vars.SUPABASE_PROD_URL is not set"
+            exit 1
+          fi
+          curl -fsS \
+            -H "apikey: ${SUPABASE_ANON_KEY}" \
+            "${SUPABASE_URL%/}/rest/v1/"
+
+  ping-staging:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Curl Supabase REST (staging)
+        env:
+          SUPABASE_URL: ${{ vars.SUPABASE_STAGING_URL }}
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_STAGING_ANON_KEY }}
+        run: |
+          if [ -z "$SUPABASE_URL" ]; then
+            echo "vars.SUPABASE_STAGING_URL is not set, skipping"
+            exit 0
+          fi
+          curl -fsS \
+            -H "apikey: ${SUPABASE_ANON_KEY}" \
+            "${SUPABASE_URL%/}/rest/v1/"
