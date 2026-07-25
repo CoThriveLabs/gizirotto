@@ -6,7 +6,7 @@ import { createFamily } from '@/server/families'
 import { humanizeErrorCode } from '@/lib/errors/user-message'
 import { FamilyClaimNotReflectedDialog } from '../_components/FamilyClaimNotReflectedDialog'
 
-export function CreateFamilyForm() {
+export function CreateFamilyForm({ next }: { next: string | null }) {
   const router = useRouter()
   const [familyName, setFamilyName] = useState('')
   const [displayName, setDisplayName] = useState('')
@@ -21,7 +21,7 @@ export function CreateFamilyForm() {
       try {
         const result = await createFamily({ familyName, displayName })
         if (result.ok) {
-          router.replace('/')
+          router.replace(next || '/')
           router.refresh()
         } else if (result.code === 'FAMILY_CLAIM_NOT_REFLECTED') {
           setShowFallback(true)

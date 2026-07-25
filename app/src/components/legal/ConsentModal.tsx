@@ -1,17 +1,25 @@
 'use client'
 
 import { useState, useEffect, useCallback } from 'react'
-import { useRouter } from 'next/navigation'
+import { useRouter, usePathname } from 'next/navigation'
 
 /**
  * 初回ログイン同意モーダル。
  * - バックドロップクリック / Esc / x ボタンでは閉じない（強制表示）。
  * - 利用規約・プライバシーポリシー両方のチェックで「同意して始める」を活性化。
  * - 「利用規約」「プライバシーポリシー」テキストはリンク（新規タブ）。
- * - 同意成功時は /api/consent に POST し、画面を refresh して通常表示に戻る。
+ * - 同意成功時は /api/consent に POST する。家族未参加（needsFamilySetup）かつホーム画面
+ *   （pathname === '/'）で同意した場合のみ /family/setup へ replace し、その後いずれの場合も
+ *   画面を refresh して通常表示に戻る。
+ *
+ * pathname を '/' 完全一致で見る理由: このモーダルは root layout にぶら下がっており、
+ * /family/join（招待リンク）や /minutes/new/adjust（ゲスト下書き復元）等、既に目的地のある
+ * 画面にも表示されうる。startsWith 等で緩めると、招待コード付き URL や下書き復元中の同意で
+ * その目的地への遷移を横取りしてしまう。
  */
-export function ConsentModal() {
+export function ConsentModal({ needsFamilySetup }: { needsFamilySetup: boolean }) {
   const router = useRouter()
+  const pathname = usePathname()
   const [termsAgreed, setTermsAgreed] = useState(false)
   const [privacyAgreed, setPrivacyAgreed] = useState(false)
   const [submitting, setSubmitting] = useState(false)
@@ -54,12 +62,17 @@ export function ConsentModal() {
         const json = (await res.json().catch(() => ({}))) as { error?: string }
         throw new Error(json.error ?? '同意の記録に失敗しました')
       }
+      if (needsFamilySetup && pathname === '/') {
+        router.replace('/family/setup')
+      }
+      // ConsentGate は root layout 配下の server component で、client 側の replace だけでは
+      // 再レンダーされない。refresh で RSC を取り直させて ConsentGate に null を返させる。
       router.refresh()
     } catch (e) {
       setError(e instanceof Error ? e.message : '同意の記録に失敗しました')
       setSubmitting(false)
     }
-  }, [canSubmit, termsAgreed, privacyAgreed, router])
+  }, [canSubmit, termsAgreed, privacyAgreed, router, needsFamilySetup, pathname])
 
   return (
     <div

@@ -21,6 +21,8 @@ interface Props {
   fields: TemplateField[]
   /** True when the page was rendered for an unauthenticated visitor. */
   isGuest?: boolean
+  /** True when the user is logged in but has not joined/created a family yet. */
+  needsFamilySetup?: boolean
 }
 
 export type ChatMessage = { role: 'user' | 'assistant'; content: string }
@@ -39,7 +41,14 @@ export type ChatLimitModalState = {
   resetAt: string | null
 }
 
-export function ChatView({ templateId, templateName, mode, fields, isGuest }: Props) {
+export function ChatView({
+  templateId,
+  templateName,
+  mode,
+  fields,
+  isGuest,
+  needsFamilySetup,
+}: Props) {
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [input, setInput] = useState('')
   const [errorMsg, setErrorMsg] = useState<string | null>(null)
@@ -87,6 +96,7 @@ export function ChatView({ templateId, templateName, mode, fields, isGuest }: Pr
     mode,
     fields,
     isGuest,
+    needsFamilySetup,
     messages,
     turnstileGate,
     clearSnapshot,

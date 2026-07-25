@@ -31,6 +31,15 @@ afterEach(() => {
   cleanup()
 })
 
+describe('HeaderAccountMenu — displayName 空文字（family 未参加ログイン済み）', () => {
+  it('トリガーの aria-label は「アカウントメニューを開く」（壊れたラベルにならない）、アバターは ● を表示', () => {
+    render(<HeaderAccountMenu displayName="" />)
+    const trigger = screen.getByRole('button', { name: 'アカウントメニューを開く' })
+    expect(trigger.getAttribute('aria-haspopup')).toBe('menu')
+    expect(trigger.textContent).toBe('●')
+  })
+})
+
 describe('HeaderAccountMenu', () => {
   it('#1: displayName を渡すとアバターボタン描画 (aria-haspopup=menu / aria-expanded=false)', () => {
     render(<HeaderAccountMenu displayName="あめ" />)

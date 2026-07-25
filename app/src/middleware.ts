@@ -183,6 +183,10 @@ export async function middleware(request: NextRequest) {
     if (pathname === '/minutes/new' || pathname.startsWith('/minutes/new/')) {
       return response
     }
+    // 同意記録は family 参加より前段階のフロー。route.ts 側で認証チェック済み。
+    if (pathname === '/api/consent') {
+      return response
+    }
     return unauthorizedOrRedirect(
       request,
       new URL(FAMILY_SETUP_PATH, request.url),

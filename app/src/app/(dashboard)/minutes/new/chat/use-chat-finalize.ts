@@ -18,8 +18,11 @@ import { writeFormCache, getDraftStorageSafe } from '@/lib/utils/form-cache'
 import {
   guestChatDraftFormId,
   GUEST_CHAT_DRAFT_RESTORE_PATH,
+  guestAdjustDraftFormId,
+  GUEST_ADJUST_DRAFT_RESTORE_PATH,
 } from '@/lib/utils/guest-adjust-draft'
 import type { UseGuestTurnstileGate } from '@/hooks/useGuestTurnstileGate'
+import type { GuestMinuteDraft } from '@/app/(dashboard)/minutes/[id]/adjust/AdjustView'
 import type { ChatMessage, ChatLimitModalState, TemplateField } from './ChatView'
 
 /**
@@ -62,6 +65,7 @@ export interface UseChatFinalizeParams {
   mode: 'A-1' | 'A-2'
   fields: TemplateField[]
   isGuest?: boolean
+  needsFamilySetup?: boolean
   messages: ChatMessage[]
   turnstileGate: UseGuestTurnstileGate
   clearSnapshot: () => void
@@ -80,6 +84,7 @@ export function useChatFinalize({
   mode,
   fields,
   isGuest,
+  needsFamilySetup,
   messages,
   turnstileGate,
   clearSnapshot,
@@ -204,6 +209,30 @@ export function useChatFinalize({
       )
       clearSnapshot()
       router.push(`/minutes/new/adjust?template_id=${templateId}`)
+      return
+    }
+
+    // ログイン済みだが family 未参加。createMinute は NOT_IN_FAMILY で必ず失敗するため、
+    // 抽出済み content をゲスト保存導線（手動側）と同じ save-draft キー・expectedPath で
+    // 書き込み、家族作成/参加へ寄り道させる。ManualBootstrap が家族作成後にこのエントリを
+    // 読んで本保存する（新しい復元機構は作らない）。
+    if (needsFamilySetup) {
+      const draft: GuestMinuteDraft = {
+        templateId,
+        title,
+        meetingDate,
+        content,
+        overrides: {},
+      }
+      writeFormCache(
+        getDraftStorageSafe(),
+        guestAdjustDraftFormId(templateId),
+        draft,
+        GUEST_ADJUST_DRAFT_RESTORE_PATH,
+      )
+      clearSnapshot()
+      const returnTo = `/minutes/new/manual?template_id=${templateId}`
+      router.replace(`/family/setup?next=${encodeURIComponent(returnTo)}`)
       return
     }
 

@@ -128,4 +128,16 @@ describe('middleware home public fix', () => {
     expect(location).toContain('/login')
     expect(location).toContain('next=')
   })
+
+  it('TC-7: ログイン済 + family 未参加 で /api/consent を GET → 通過（/family/setup へ redirect しない）', async () => {
+    mockSupabase({ user: { id: 'u1' }, accessToken: 'tok' })
+    ;(decodeAccessTokenClaims as ReturnType<typeof vi.fn>).mockReturnValue({
+      family_id: null,
+    })
+
+    const res = await middleware(makeReq('/api/consent'))
+
+    expect(res.headers.get('location')).toBeNull()
+    expect(res.status).not.toBe(401)
+  })
 })

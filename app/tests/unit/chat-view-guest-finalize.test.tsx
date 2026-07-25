@@ -13,7 +13,7 @@ import React from 'react'
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, cleanup, act, waitFor, screen, fireEvent } from '@testing-library/react'
 import { makeFormCacheKey } from '@/lib/utils/form-cache'
-import { guestChatDraftFormId } from '@/lib/utils/guest-adjust-draft'
+import { guestChatDraftFormId, guestAdjustDraftFormId } from '@/lib/utils/guest-adjust-draft'
 
 function readChatDraftValues(templateId: string): {
   content: Record<string, string>
@@ -28,8 +28,9 @@ function readChatDraftValues(templateId: string): {
 }
 
 const pushMock = vi.fn()
+const replaceMock = vi.fn()
 vi.mock('next/navigation', () => ({
-  useRouter: () => ({ push: pushMock, replace: vi.fn(), refresh: vi.fn(), back: vi.fn() }),
+  useRouter: () => ({ push: pushMock, replace: replaceMock, refresh: vi.fn(), back: vi.fn() }),
   usePathname: () => '/minutes/new/chat',
 }))
 
@@ -178,6 +179,7 @@ beforeEach(() => {
   extractFieldsFromChatMock.mockReset()
   createMinuteMock.mockReset()
   pushMock.mockReset()
+  replaceMock.mockReset()
   turnstileControls.autoToken = true
   turnstileControls.latestOnToken = null
   turnstileControls.resetMock.mockReset()
@@ -489,6 +491,93 @@ describe('ChatView — GA6 guest AI daily limit (429)', () => {
     // 「返答の取得に失敗しました」の汎用メッセージは出ないこと（catch 節で上書き除外）。
     expect(
       screen.queryByText('返答の取得に失敗しました。少し時間を置いて再度お試しください。'),
+    ).toBeNull()
+  })
+})
+
+describe('ChatView — needsFamilySetup=true の onFinalize', () => {
+  it('createMinute を呼ばず、家族未参加向け save-draft を書いて /family/setup?next=... へ replace する', async () => {
+    const fetchMock = makeFetchMock()
+    global.fetch = fetchMock
+
+    await act(async () => {
+      render(<ChatView {...DEFAULT_PROPS} isGuest={false} needsFamilySetup />)
+    })
+    await waitFor(() => {
+      expect(createChatSessionMock).toHaveBeenCalled()
+    })
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledTimes(1)
+    })
+
+    const textarea = screen.getByPlaceholderText(/メッセージを入力/)
+    await act(async () => {
+      fireEvent.change(textarea, { target: { value: 'テストメッセージ' } })
+    })
+    await act(async () => {
+      fireEvent.keyDown(textarea, { key: 'Enter', ctrlKey: true })
+    })
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledTimes(2)
+    })
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: '議事録にする' })).not.toBeDisabled()
+    })
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: '議事録にする' }))
+    })
+
+    await waitFor(() => {
+      expect(replaceMock).toHaveBeenCalledWith(
+        `/family/setup?next=${encodeURIComponent(
+          `/minutes/new/manual?template_id=${DEFAULT_PROPS.templateId}`,
+        )}`,
+      )
+    })
+    expect(createMinuteMock).not.toHaveBeenCalled()
+    expect(
+      localStorage.getItem(makeFormCacheKey(guestAdjustDraftFormId(DEFAULT_PROPS.templateId))),
+    ).not.toBeNull()
+  })
+
+  it('isGuest=true が優先され、needsFamilySetup=true でもゲスト adjust ルートへ遷移する', async () => {
+    const fetchMock = makeFetchMock()
+    global.fetch = fetchMock
+
+    await act(async () => {
+      render(<ChatView {...DEFAULT_PROPS} isGuest needsFamilySetup />)
+    })
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledTimes(1)
+    })
+
+    const textarea = screen.getByPlaceholderText(/メッセージを入力/)
+    await act(async () => {
+      fireEvent.change(textarea, { target: { value: 'テストメッセージ' } })
+    })
+    await act(async () => {
+      fireEvent.keyDown(textarea, { key: 'Enter', ctrlKey: true })
+    })
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledTimes(2)
+    })
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: '議事録にする' })).not.toBeDisabled()
+    })
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: '議事録にする' }))
+    })
+
+    await waitFor(() => {
+      expect(pushMock).toHaveBeenCalledWith(
+        `/minutes/new/adjust?template_id=${DEFAULT_PROPS.templateId}`,
+      )
+    })
+    expect(createMinuteMock).not.toHaveBeenCalled()
+    expect(
+      localStorage.getItem(makeFormCacheKey(guestAdjustDraftFormId(DEFAULT_PROPS.templateId))),
     ).toBeNull()
   })
 })

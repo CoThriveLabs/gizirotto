@@ -6,7 +6,13 @@ import { joinFamily } from '@/server/families'
 import { humanizeErrorCode } from '@/lib/errors/user-message'
 import { FamilyClaimNotReflectedDialog } from '../_components/FamilyClaimNotReflectedDialog'
 
-export function JoinFamilyForm({ initialCode }: { initialCode: string }) {
+export function JoinFamilyForm({
+  initialCode,
+  next,
+}: {
+  initialCode: string
+  next: string | null
+}) {
   const router = useRouter()
   const [inviteCode, setInviteCode] = useState(initialCode.toUpperCase())
   const [displayName, setDisplayName] = useState('')
@@ -21,7 +27,7 @@ export function JoinFamilyForm({ initialCode }: { initialCode: string }) {
       try {
         const result = await joinFamily({ inviteCode, displayName })
         if (result.ok) {
-          router.replace('/')
+          router.replace(next || '/')
           router.refresh()
         } else if (result.code === 'FAMILY_CLAIM_NOT_REFLECTED') {
           setShowFallback(true)

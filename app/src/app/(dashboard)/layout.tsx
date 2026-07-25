@@ -49,7 +49,8 @@ export default async function DashboardLayout({
   return (
     <ToastProvider>
       <div className="min-h-screen flex flex-col pb-16 md:pb-0">
-        <Header familyName={familyName} displayName={displayName} />
+        {/* このレイアウトは未ログインなら既に redirect 済みなので isAuthenticated は常に true。 */}
+        <Header familyName={familyName} displayName={displayName} isAuthenticated={true} />
         {/* main content と同じ container 幅で🏠 ホームリンクを配置し左端を揃える。
             モバイルは下部 SubNav にホームボタン常駐のため非表示。 */}
         <div className="max-w-4xl mx-auto px-4 pt-3 w-full">
