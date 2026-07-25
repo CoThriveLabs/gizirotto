@@ -26,14 +26,14 @@ describe('LogoutConfirmModal', () => {
     expect(screen.getByText('ログアウトしますか？')).toBeTruthy()
   })
 
-  it('#3: open=true で本文と 2 ボタン（はい、ログアウト / キャンセル）が描画される', () => {
+  it('#3: open=true で本文と 2 ボタン（ログアウト / キャンセル）が描画される', () => {
     render(<LogoutConfirmModal open onConfirm={noop} onCancel={noop} />)
     expect(
       screen.getByText(
         'ログアウトすると、再びログインするまで議事録の閲覧・編集はできません。',
       ),
     ).toBeTruthy()
-    expect(screen.getByRole('button', { name: 'はい、ログアウト' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'ログアウト' })).toBeTruthy()
     expect(screen.getByRole('button', { name: 'キャンセル' })).toBeTruthy()
   })
 
@@ -75,10 +75,10 @@ describe('LogoutConfirmModal', () => {
     expect(onCancel).not.toHaveBeenCalled()
   })
 
-  it('#9: 「はい、ログアウト」押下で onConfirm が 1 回呼ばれる', () => {
+  it('#9: 「ログアウト」押下で onConfirm が 1 回呼ばれる', () => {
     const onConfirm = vi.fn()
     render(<LogoutConfirmModal open onConfirm={onConfirm} onCancel={noop} />)
-    fireEvent.click(screen.getByRole('button', { name: 'はい、ログアウト' }))
+    fireEvent.click(screen.getByRole('button', { name: 'ログアウト' }))
     expect(onConfirm).toHaveBeenCalledTimes(1)
   })
 

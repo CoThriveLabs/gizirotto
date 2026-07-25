@@ -19,7 +19,7 @@ import { useEffect, useRef } from 'react'
 export interface LogoutConfirmModalProps {
   /** モーダル表示制御。false なら DOM 描画しない (null return)。 */
   open: boolean
-  /** 「はい、ログアウト」押下時のハンドラ。await で完了を待つ。 */
+  /** 「ログアウト」押下時のハンドラ。await で完了を待つ。 */
   onConfirm: () => void | Promise<void>
   /** 「キャンセル」/ Esc / 背景クリック押下時のハンドラ。 */
   onCancel: () => void
@@ -103,7 +103,7 @@ export function LogoutConfirmModal({
             disabled={loading}
             className="w-full rounded bg-gizirotto-blue-500 px-4 py-2 text-sm font-medium text-white hover:bg-gizirotto-blue-700 disabled:opacity-60"
           >
-            {loading ? 'ログアウト中…' : 'はい、ログアウト'}
+            {loading ? 'ログアウト中…' : 'ログアウト'}
           </button>
           <button
             type="button"
