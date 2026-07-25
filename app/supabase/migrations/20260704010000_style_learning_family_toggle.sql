@@ -1,4 +1,1 @@
--- 世帯単位の「書き方を学習する」ON/OFF トグル。
--- OFF の間はプロファイル生成・下書きへの注入の両方を止める（既定 ON = オプトアウト運用）。
-alter table public.families
-  add column if not exists style_learning_enabled boolean not null default true;
+-- tombstoned: 内容は 20260526112403_remote_schema.sql の baseline に統合済み。原本は supabase/migrations_archive/ 参照。
