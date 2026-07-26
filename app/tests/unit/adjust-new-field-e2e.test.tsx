@@ -6,7 +6,7 @@
  *   2. 追加直後に label インライン入力（autoFocus・templates 同型）が現れる
  *   3. 値 input に文字を入れると BboxPane mock の dynamicFieldValues prop に新規 field の
  *      runtime PdfField が **保存前から** 乗る = 「動的プレビュー反映」を構造的に担保
- *   4. 「この項目を削除」押下で新規 field が削除され、dynamicFieldValues からも消える
+ *   4. 「削除」押下で新規 field が削除され、dynamicFieldValues からも消える
  *      = newFieldNames Set がクリーンアップされ payload に含まれない
  *
  * BboxPane は dynamicFieldValues prop の中身を data-* 属性に書き出すだけの最小 stub に置き換え、
@@ -289,7 +289,7 @@ describe('AdjustView 項目追加 → 値入力 → プレビュー反映 → �
 
     // 削除ボタン押下（aside / FloatingShell 両方にあるので最初の要素）。
     await act(async () => {
-      fireEvent.click(screen.getAllByText('この項目を削除')[0])
+      fireEvent.click(screen.getAllByText('削除')[0])
       await Promise.resolve()
     })
 

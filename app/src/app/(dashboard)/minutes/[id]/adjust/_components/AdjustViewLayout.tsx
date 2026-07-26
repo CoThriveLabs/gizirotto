@@ -36,7 +36,6 @@ interface AdjustViewLayoutProps {
     guestMode?: boolean
     minuteId: string
     onBackToViewerClick: (e: React.MouseEvent<HTMLAnchorElement>) => void
-    onCancel: () => void
     dirty: boolean
   }
   view: {
@@ -134,7 +133,7 @@ export default function AdjustViewLayout({
       </div>
 
       {/* ヘッダー: 説明文 ↔ ボタン列を横並び右寄せ。
-          ボタン列順序: [グリッド表示] → [← 戻る][進む →] → [項目を追加] → [キャンセル] → [保存]。
+          ボタン列順序: [グリッド表示] → [← 戻る][進む →] → [項目を追加] → [保存]。
           1 行に収まらない幅では、説明文を縮め続けず（min-w で下限を確保）ボタン列ごと次の行へ
           折り返す（flex-wrap の通常挙動に委譲。強制 nowrap は使わない）。 */}
       <div className="flex items-center justify-between gap-3 flex-wrap pb-1">
@@ -171,14 +170,6 @@ export default function AdjustViewLayout({
             className="bg-white border border-gizirotto-blue-500 text-gizirotto-blue-700 hover:bg-gizirotto-blue-500/10 font-medium px-3 py-2 rounded text-sm disabled:opacity-40 disabled:cursor-not-allowed"
           >
             項目を追加
-          </button>
-          <button
-            type="button"
-            onClick={header.onCancel}
-            disabled={save.saving}
-            className="text-sm text-gray-600 hover:text-gray-800"
-          >
-            キャンセル
           </button>
           <button
             type="button"
