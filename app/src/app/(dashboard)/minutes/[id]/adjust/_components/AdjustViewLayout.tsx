@@ -1,6 +1,7 @@
 'use client'
 
 import Link from 'next/link'
+import { useEffect, useRef } from 'react'
 import type { FittableFont } from '@/lib/pdf-output/fitting'
 import type { PageMeta } from '@/lib/pdf-output/bbox-coords'
 import { UndoRedoButtons } from '@/components/editor/UndoRedoButtons'
@@ -12,7 +13,14 @@ import { UniformFontSizeSection } from './UniformFontSizeSection'
 import { UnsavedChangesModal } from '@/components/editor/UnsavedChangesModal'
 import type { useMinuteAdjustEditor } from '@/hooks/editor/useMinuteAdjustEditor'
 import type { useMinuteSaveLifecycle } from '../use-minute-save-lifecycle'
-import { resolveWhiteoutRawImageUrl, type TemplateFieldDef } from '../adjust-view-helpers'
+import {
+  computeAutoScrollDelta,
+  resolveWhiteoutRawImageUrl,
+  type TemplateFieldDef,
+} from '../adjust-view-helpers'
+
+/** 選択枠の下辺とスマホ用モーダル上辺の間に確保する最低余白（px）。 */
+const SELECTION_MODAL_MIN_GAP_PX = 4
 
 /** fields 配列の上限。20 で「項目を追加」disabled（hook の handleAddField ガードと一致）。 */
 const FIELDS_MAX = 20
@@ -58,6 +66,29 @@ export default function AdjustViewLayout({
   selectedField,
   renderInspector,
 }: AdjustViewLayoutProps) {
+  // スマホ用インスペクタ（下部固定モーダル）に選択中 bbox が隠れないための自動スクロール。
+  // モーダル ref は selectedField の真偽だけで DOM にマウントされる（md:hidden は CSS で
+  // 非表示にするだけで、要素自体は PC 幅でも存在する）。そのため display:none の要素に
+  // getBoundingClientRect() を呼ぶと zero-rect（top:0 等）が返り誤った delta を計算して
+  // しまうので、computedStyle で非表示を検知し早期 return する。
+  const mobileModalRef = useRef<HTMLDivElement | null>(null)
+  useEffect(() => {
+    if (!selectedField) return
+    const modalEl = mobileModalRef.current
+    const geom = view.selectionGeom
+    if (!modalEl || !geom) return
+    if (window.getComputedStyle(modalEl).display === 'none') return
+    const delta = computeAutoScrollDelta({
+      selectionBottom: geom.viewportTop + geom.height,
+      modalTop: modalEl.getBoundingClientRect().top,
+      minGap: SELECTION_MODAL_MIN_GAP_PX,
+    })
+    if (delta <= 0) return
+    window.scrollBy({ top: delta, behavior: 'smooth' })
+    // selectionGeom は bbox-pane 側で選択/倍率/ページ寸法変化時のみ再計算される（ドラッグ中は不変）。
+    // スクロール自体はその依存に含まれないため、ここで再スクロールを誘発する連鎖は起きない。
+  }, [selectedField, view.selectionGeom])
+
   return (
     <div className="space-y-3">
       {/* 閲覧画面への戻り導線。guestMode は保存済み minute を持たないためテンプレ選択画面へ。 */}
@@ -103,9 +134,11 @@ export default function AdjustViewLayout({
       </div>
 
       {/* ヘッダー: 説明文 ↔ ボタン列を横並び右寄せ。
-          ボタン列順序: [グリッド表示] → [← 戻る][進む →] → [項目を追加] → [キャンセル] → [保存]。 */}
-      <div className="flex items-center justify-between gap-3 flex-wrap sm:flex-nowrap pb-1">
-        <p className="text-sm text-gray-600 sm:flex-1 sm:min-w-0">
+          ボタン列順序: [グリッド表示] → [← 戻る][進む →] → [項目を追加] → [キャンセル] → [保存]。
+          1 行に収まらない幅では、説明文を縮め続けず（min-w で下限を確保）ボタン列ごと次の行へ
+          折り返す（flex-wrap の通常挙動に委譲。強制 nowrap は使わない）。 */}
+      <div className="flex items-center justify-between gap-3 flex-wrap pb-1">
+        <p className="text-sm text-gray-600 sm:flex-1 min-w-[250px]">
           項目をタップして選び、値・位置・大きさを調整してください。
         </p>
         <div className="flex items-center gap-3 sm:shrink-0">
@@ -160,7 +193,10 @@ export default function AdjustViewLayout({
 
       {/* PC: 2 カラム grid（左=プレビュー / 右=aside 固定パネル）/ スマホ: プレビューのみ + 下バー */}
       <div className="grid grid-cols-1 md:grid-cols-[minmax(0,1fr)_320px] gap-4 items-start">
-        <div>
+        {/* スマホ用モーダル（下部固定・max-h-[50vh] + bottom-14）に隠れず末尾項目まで
+            スクロールで到達できるよう、モーダル分の余白を下に確保する（md 以上は aside 固定
+            パネルでモーダル自体が存在しないため pb 不要＝0 に戻す）。 */}
+        <div className="pb-[calc(50vh+80px)] md:pb-0">
           {view.pageSizes.length > 0 ? (
             view.pageSizes.map((meta) => (
               <BboxPane
@@ -223,6 +259,7 @@ export default function AdjustViewLayout({
       {/* スマホ: FloatingShell 下部中央バー（md 未満専用）。選択中 → Inspector dense。 */}
       {selectedField && (
         <div
+          ref={mobileModalRef}
           className="md:hidden fixed inset-x-0 bottom-14 z-30 flex justify-center px-3 pointer-events-none"
         >
           <div
@@ -237,9 +274,6 @@ export default function AdjustViewLayout({
           </div>
         </div>
       )}
-
-      {/* selectionGeom は BboxPane が内部的にラベル左上表示に使う。本体側では現状未使用。 */}
-      {view.selectionGeom && <span className="hidden" data-selection-geom="true" />}
 
       {errorMsg && (
         <p className="text-sm text-red-600" role="alert">

@@ -107,3 +107,6 @@ Thumbs.db
 # Test artifacts
 tests/screenshots/
 .env*
+
+# UX 検証用スクラッチ（html/mjs/png のみ、アプリコードから未参照）
+tmp-ux-check/

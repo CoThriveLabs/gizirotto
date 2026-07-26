@@ -139,7 +139,8 @@ export function AdjustView({
   const [zoom, setZoom] = useState(1)
   const [pdfDisplayWidth, setPdfDisplayWidth] = useState<number | null>(null)
   const [showGrid, setShowGrid] = useState(false)
-  // selectionGeom は BboxPane が内部的にラベル左上表示に使う。本体側では現状未使用（将来用）。
+  // selectionGeom は BboxPane が内部的にラベル左上表示に使うほか、AdjustViewLayout の
+  // スマホ用モーダル自動スクロール（選択枠がモーダルに隠れないための scrollBy 計算）にも使う。
   const [selectionGeom, setSelectionGeom] = useState<SelectionGeom | null>(null)
 
   // textarea ref は BboxPane と Inspector の両方が触るため本体管理。autoFocus effect は hook 内。

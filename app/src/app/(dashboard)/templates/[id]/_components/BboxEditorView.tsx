@@ -113,12 +113,13 @@ export default function BboxEditorView({
 
       {/* PC幅で 3モードのボタン列配置を右側横並びに統一。
           説明文 <p> の長さがモードで違い flex-wrap のため長文モードだけ折り返す問題の対策:
-            - 親に sm:flex-nowrap を付け、PC幅では折り返し自体を禁止（長文でも1行を維持）。
-            - 説明文 <p> に sm:flex-1 sm:min-w-0 を付け、長文時は <p> 側だけが縮む（truncate なし＝
-              そのまま折り返し表示でOK・縦に伸びるだけ）。ボタン列は sm:shrink-0 で縮まず右寄せ固定。
-          sm 未満（スマホ）は flex-wrap のまま＝従来のモバイル挙動を完全維持（下部バー/右パネルは別系統）。 */}
-      <div className="flex items-center justify-between gap-3 flex-wrap sm:flex-nowrap">
-        <p className="text-sm text-gray-600 sm:flex-1 sm:min-w-0">
+            - 説明文 <p> に sm:flex-1 min-w-[250px] を付け、幅に余裕があれば <p> 側が伸縮する
+              （min-w で下限を確保し文字が1文字ずつ縦に潰れるのを防ぐ）。ボタン列は sm:shrink-0 で
+              縮まず右寄せ固定。
+            - 1 行に収まらない幅では強制 nowrap をせず、通常の flex-wrap 挙動でボタン列ごと
+              次の行へ折り返す。 */}
+      <div className="flex items-center justify-between gap-3 flex-wrap">
+        <p className="text-sm text-gray-600 sm:flex-1 min-w-[250px]">
           {view.mode === 'whiteout'
             ? '白塗りの枠を選んでドラッグ、または下のボタン・矢印キーで 1px ずつ調整できます。記入欄は薄く参考表示しています。'
             : view.mode === 'fixed'
