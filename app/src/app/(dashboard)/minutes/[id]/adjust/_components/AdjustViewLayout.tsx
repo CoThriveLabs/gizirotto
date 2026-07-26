@@ -76,6 +76,11 @@ export default function AdjustViewLayout({
     const modalEl = mobileModalRef.current
     const geom = view.selectionGeom
     if (!modalEl || !geom) return
+    // 選択が A→B に変わった commit では、子（bbox-pane）の effect が先に走って B の geom を
+    // setState する一方、この親 effect は selectedField 変化で発火しつつクロージャ内の
+    // selectionGeom はまだ A のまま。scrollBy は相対量なので、そのまま走らせると A 分と
+    // B 分を二重にスクロールしてしまう。geom の name が現在の選択と一致する時だけ動かす。
+    if (geom.name !== selectedField.name) return
     if (window.getComputedStyle(modalEl).display === 'none') return
     const delta = computeAutoScrollDelta({
       selectionBottom: geom.viewportTop + geom.height,

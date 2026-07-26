@@ -13,6 +13,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, fireEvent, act } from '@testing-library/react'
 
 type SelectionGeom = {
+  name: string
   viewportLeft: number
   viewportTop: number
   width: number
@@ -228,7 +229,13 @@ afterEach(() => {
 describe('AdjustView スマホ用モーダルの自動スクロール', () => {
   it('選択枠の下辺がモーダル上辺 (1010) に被る場合、不足分だけ scrollBy が呼ばれる', async () => {
     // selectionBottom = 1000 + 20 = 1020 > modalTop 1010 → gap=-10 → delta = 4 - (-10) = 14
-    setMockGeom({ viewportLeft: 0, viewportTop: 1000, width: 100, height: 20 })
+    setMockGeom({
+      name: 'attendees',
+      viewportLeft: 0,
+      viewportTop: 1000,
+      width: 100,
+      height: 20,
+    })
     await renderAdjust()
     await act(async () => {
       fireEvent.click(screen.getByTestId('bbox-field-attendees'))
@@ -239,7 +246,13 @@ describe('AdjustView スマホ用モーダルの自動スクロール', () => {
 
   it('既に 4px 以上の余白がある場合 scrollBy は呼ばれない', async () => {
     // selectionBottom = 900 + 20 = 920。modalTop 1010 との gap=90 (>=4) → delta=0
-    setMockGeom({ viewportLeft: 0, viewportTop: 900, width: 100, height: 20 })
+    setMockGeom({
+      name: 'attendees',
+      viewportLeft: 0,
+      viewportTop: 900,
+      width: 100,
+      height: 20,
+    })
     await renderAdjust()
     await act(async () => {
       fireEvent.click(screen.getByTestId('bbox-field-attendees'))
@@ -262,7 +275,32 @@ describe('AdjustView スマホ用モーダルの自動スクロール', () => {
     })
     // selectionBottom = 1000 + 20 = 1020 > modalTop 1010 → 非表示判定がなければ delta=14 で
     // scrollBy が呼ばれてしまうケース（1 つ目のテストと同じ geom）。
-    setMockGeom({ viewportLeft: 0, viewportTop: 1000, width: 100, height: 20 })
+    setMockGeom({
+      name: 'attendees',
+      viewportLeft: 0,
+      viewportTop: 1000,
+      width: 100,
+      height: 20,
+    })
+    await renderAdjust()
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('bbox-field-attendees'))
+      await Promise.resolve()
+    })
+    expect(scrollBySpy).not.toHaveBeenCalled()
+  })
+
+  it('geom の name が選択中フィールドと一致しない場合、scrollBy は呼ばれない', async () => {
+    // 選択切替直後は親 effect が「1 つ前の選択の geom」を掴んだまま発火しうる。
+    // その古い geom（別 field 由来）で相対スクロールしないことを検証する。
+    // ジオメトリ自体は 1 つ目のテストと同じ = name 判定が無ければ delta=14 で呼ばれてしまう。
+    setMockGeom({
+      name: 'previous-field',
+      viewportLeft: 0,
+      viewportTop: 1000,
+      width: 100,
+      height: 20,
+    })
     await renderAdjust()
     await act(async () => {
       fireEvent.click(screen.getByTestId('bbox-field-attendees'))

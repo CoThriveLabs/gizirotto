@@ -21,9 +21,9 @@ out/
 build/
 dist/
 
-# env
-.env*.local
-.env
+# env（.env.example のみ雛形として追跡する）
+.env*
+!.env.example
 
 # debug
 npm-debug.log*
@@ -106,7 +106,6 @@ Thumbs.db
 
 # Test artifacts
 tests/screenshots/
-.env*
 
-# UX 検証用スクラッチ（html/mjs/png のみ、アプリコードから未参照）
+# 手元の UI 確認用スクラッチ（アプリコードから未参照）
 tmp-ux-check/

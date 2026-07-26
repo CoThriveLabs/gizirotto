@@ -139,6 +139,7 @@ export default function BboxPane({
     const w = ptToDispX(meta, sel.bbox.x + sel.bbox.w, fitOpts) - left
     const h = ptToDispY(meta, sel.bbox.y + sel.bbox.h, fitOpts) - top
     onSelectionGeom({
+      name: sel.name,
       viewportLeft: rect.left + left,
       viewportTop: rect.top + top,
       width: w,

@@ -42,18 +42,18 @@ describe('HeaderAccountMenu — displayName 空文字（family 未参加ログ�
 
 describe('HeaderAccountMenu', () => {
   it('#1: displayName を渡すとアバターボタン描画 (aria-haspopup=menu / aria-expanded=false)', () => {
-    render(<HeaderAccountMenu displayName="あめ" />)
+    render(<HeaderAccountMenu displayName="テスト太郎" />)
     const trigger = screen.getByRole('button', {
-      name: 'あめ のアカウントメニューを開く',
+      name: 'テスト太郎 のアカウントメニューを開く',
     })
     expect(trigger.getAttribute('aria-haspopup')).toBe('menu')
     expect(trigger.getAttribute('aria-expanded')).toBe('false')
   })
 
   it('#2: ボタンクリックで panel 開く (aria-expanded=true)', () => {
-    render(<HeaderAccountMenu displayName="あめ" />)
+    render(<HeaderAccountMenu displayName="テスト太郎" />)
     const trigger = screen.getByRole('button', {
-      name: 'あめ のアカウントメニューを開く',
+      name: 'テスト太郎 のアカウントメニューを開く',
     })
     fireEvent.click(trigger)
     expect(trigger.getAttribute('aria-expanded')).toBe('true')
@@ -61,9 +61,9 @@ describe('HeaderAccountMenu', () => {
   })
 
   it('#3: panel 内に 4 項目描画 (家族メンバー / 設定 / ログアウト / 退会はこちらから)', () => {
-    render(<HeaderAccountMenu displayName="あめ" />)
+    render(<HeaderAccountMenu displayName="テスト太郎" />)
     fireEvent.click(
-      screen.getByRole('button', { name: 'あめ のアカウントメニューを開く' }),
+      screen.getByRole('button', { name: 'テスト太郎 のアカウントメニューを開く' }),
     )
     const items = screen.getAllByRole('menuitem')
     expect(items).toHaveLength(4)
@@ -74,36 +74,36 @@ describe('HeaderAccountMenu', () => {
   })
 
   it('#4: 「家族メンバー」リンクが /members を href に持つ', () => {
-    render(<HeaderAccountMenu displayName="あめ" />)
+    render(<HeaderAccountMenu displayName="テスト太郎" />)
     fireEvent.click(
-      screen.getByRole('button', { name: 'あめ のアカウントメニューを開く' }),
+      screen.getByRole('button', { name: 'テスト太郎 のアカウントメニューを開く' }),
     )
     const link = screen.getByRole('menuitem', { name: '家族メンバー' })
     expect(link.getAttribute('href')).toBe('/members')
   })
 
   it('#5: 「設定」リンクが /settings を href に持つ', () => {
-    render(<HeaderAccountMenu displayName="あめ" />)
+    render(<HeaderAccountMenu displayName="テスト太郎" />)
     fireEvent.click(
-      screen.getByRole('button', { name: 'あめ のアカウントメニューを開く' }),
+      screen.getByRole('button', { name: 'テスト太郎 のアカウントメニューを開く' }),
     )
     const link = screen.getByRole('menuitem', { name: '設定' })
     expect(link.getAttribute('href')).toBe('/settings')
   })
 
   it('#6: 「退会はこちらから」リンクが /settings#delete-account を href に持つ', () => {
-    render(<HeaderAccountMenu displayName="あめ" />)
+    render(<HeaderAccountMenu displayName="テスト太郎" />)
     fireEvent.click(
-      screen.getByRole('button', { name: 'あめ のアカウントメニューを開く' }),
+      screen.getByRole('button', { name: 'テスト太郎 のアカウントメニューを開く' }),
     )
     const link = screen.getByRole('menuitem', { name: '退会はこちらから' })
     expect(link.getAttribute('href')).toBe('/settings#delete-account')
   })
 
   it('#7: 「ログアウト」項目クリックで panel 閉じる + LogoutConfirmModal 表示', () => {
-    render(<HeaderAccountMenu displayName="あめ" />)
+    render(<HeaderAccountMenu displayName="テスト太郎" />)
     const trigger = screen.getByRole('button', {
-      name: 'あめ のアカウントメニューを開く',
+      name: 'テスト太郎 のアカウントメニューを開く',
     })
     fireEvent.click(trigger)
     const logoutItem = screen.getByRole('menuitem', { name: 'ログアウト' })
@@ -117,9 +117,9 @@ describe('HeaderAccountMenu', () => {
   })
 
   it('#8: LogoutConfirmModal の onCancel で modal 閉じる (ドロップダウンは再表示しない)', () => {
-    render(<HeaderAccountMenu displayName="あめ" />)
+    render(<HeaderAccountMenu displayName="テスト太郎" />)
     fireEvent.click(
-      screen.getByRole('button', { name: 'あめ のアカウントメニューを開く' }),
+      screen.getByRole('button', { name: 'テスト太郎 のアカウントメニューを開く' }),
     )
     fireEvent.click(screen.getByRole('menuitem', { name: 'ログアウト' }))
     expect(screen.getByRole('dialog')).toBeTruthy()
@@ -130,9 +130,9 @@ describe('HeaderAccountMenu', () => {
   })
 
   it('#9: Esc キーで panel 閉じる + トリガーボタンへ focus が戻る', () => {
-    render(<HeaderAccountMenu displayName="あめ" />)
+    render(<HeaderAccountMenu displayName="テスト太郎" />)
     const trigger = screen.getByRole('button', {
-      name: 'あめ のアカウントメニューを開く',
+      name: 'テスト太郎 のアカウントメニューを開く',
     })
     fireEvent.click(trigger)
     expect(trigger.getAttribute('aria-expanded')).toBe('true')
@@ -143,9 +143,9 @@ describe('HeaderAccountMenu', () => {
   })
 
   it('#10: 外側 pointerdown (document body) で panel 閉じる', () => {
-    render(<HeaderAccountMenu displayName="あめ" />)
+    render(<HeaderAccountMenu displayName="テスト太郎" />)
     const trigger = screen.getByRole('button', {
-      name: 'あめ のアカウントメニューを開く',
+      name: 'テスト太郎 のアカウントメニューを開く',
     })
     fireEvent.click(trigger)
     expect(screen.getByRole('menu')).toBeTruthy()
@@ -156,9 +156,9 @@ describe('HeaderAccountMenu', () => {
   })
 
   it('#11: panel 内クリックで panel 閉じない', () => {
-    render(<HeaderAccountMenu displayName="あめ" />)
+    render(<HeaderAccountMenu displayName="テスト太郎" />)
     fireEvent.click(
-      screen.getByRole('button', { name: 'あめ のアカウントメニューを開く' }),
+      screen.getByRole('button', { name: 'テスト太郎 のアカウントメニューを開く' }),
     )
     const panel = screen.getByRole('menu', { name: 'アカウントメニュー' })
     fireEvent.pointerDown(panel)
@@ -166,9 +166,9 @@ describe('HeaderAccountMenu', () => {
   })
 
   it('#12: トリガー連打で panel が開閉トグルする', () => {
-    render(<HeaderAccountMenu displayName="あめ" />)
+    render(<HeaderAccountMenu displayName="テスト太郎" />)
     const trigger = screen.getByRole('button', {
-      name: 'あめ のアカウントメニューを開く',
+      name: 'テスト太郎 のアカウントメニューを開く',
     })
     fireEvent.click(trigger)
     expect(trigger.getAttribute('aria-expanded')).toBe('true')

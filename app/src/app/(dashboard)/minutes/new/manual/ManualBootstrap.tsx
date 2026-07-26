@@ -16,6 +16,7 @@ import {
 } from '@/lib/utils/form-cache'
 import {
   guestAdjustDraftFormId,
+  guestAdjustReturnPath,
   GUEST_ADJUST_DRAFT_RESTORE_PATH,
   touchGuestAdjustDraft,
 } from '@/lib/utils/guest-adjust-draft'
@@ -73,10 +74,15 @@ export function ManualBootstrap({
     // ログイン済みだが family 未参加。createMinute は NOT_IN_FAMILY で必ず失敗するため、
     // 先に家族作成/参加へ寄り道させる。戻り先はこのページ自身（?next= で往復）。
     // 下書きの TTL をここで打ち直し、往復のたびに新しい猶予を与える。
+    // 判定順（isGuest → needsFamilySetup → createMinute）は保ったまま、StrictMode の
+    // 二重 mount で TTL 打ち直し + replace が 2 回走らないよう startedRef で単発化する。
     if (needsFamilySetup) {
+      if (startedRef.current) return
+      startedRef.current = true
       touchGuestAdjustDraft(templateId)
-      const returnTo = `/minutes/new/manual?template_id=${templateId}`
-      router.replace(`/family/setup?next=${encodeURIComponent(returnTo)}`)
+      router.replace(
+        `/family/setup?next=${encodeURIComponent(guestAdjustReturnPath(templateId))}`,
+      )
       return
     }
 

@@ -57,10 +57,7 @@ export function Header({
             </span>
           )}
           {isAuthenticated ? (
-            <HeaderAccountMenu
-              displayName={displayName}
-              familyName={familyName}
-            />
+            <HeaderAccountMenu displayName={displayName} />
           ) : (
             // 未ログイン時はアバターの代わりにログイン誘導リンクを出す。
             // ログイン後にホームへ戻る挙動を保つため next=/ を明示。

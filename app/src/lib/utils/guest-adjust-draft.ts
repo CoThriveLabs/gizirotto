@@ -18,6 +18,14 @@ export function guestAdjustDraftFormId(templateId: string): string {
 export const GUEST_ADJUST_DRAFT_RESTORE_PATH = '/minutes/new/manual'
 
 /**
+ * 家族作成/参加へ寄り道させるときの戻り先 URL（`/family/setup?next=` に載せる値）。
+ * 復元先ページと template_id の組み立てを 1 箇所に集約し、呼び出し側ごとの表記ゆれを防ぐ。
+ */
+export function guestAdjustReturnPath(templateId: string): string {
+  return `${GUEST_ADJUST_DRAFT_RESTORE_PATH}?template_id=${encodeURIComponent(templateId)}`
+}
+
+/**
  * 家族未作成ユーザーを /family/setup へ寄り道させる直前に、ゲスト下書きの TTL を打ち直す。
  * 家族作成/参加の往復にも 30 分（GUEST_SNAPSHOT_TTL_MS）の猶予をそのまま与えるための処理で、
  * savedAt を現在時刻へ更新するだけ（values / expectedPath は変更しない）。

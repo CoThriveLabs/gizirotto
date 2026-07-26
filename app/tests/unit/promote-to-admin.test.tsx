@@ -42,7 +42,7 @@ describe('PromoteToAdminButton', () => {
     render(
       <PromoteToAdminButton
         memberId="m-1"
-        displayName="ろぴ"
+        displayName="テスト太郎"
         currentRole="member"
         myRole="admin"
       />,
@@ -54,7 +54,7 @@ describe('PromoteToAdminButton', () => {
     render(
       <PromoteToAdminButton
         memberId="m-1"
-        displayName="ろぴ"
+        displayName="テスト太郎"
         currentRole="admin"
         myRole="admin"
       />,
@@ -66,7 +66,7 @@ describe('PromoteToAdminButton', () => {
     render(
       <PromoteToAdminButton
         memberId="m-1"
-        displayName="ろぴ"
+        displayName="テスト太郎"
         currentRole="member"
         myRole="member"
       />,
@@ -79,7 +79,7 @@ describe('PromoteToAdminButton', () => {
     render(
       <PromoteToAdminButton
         memberId="member-42"
-        displayName="ろぴ"
+        displayName="テスト太郎"
         currentRole="member"
         myRole="admin"
       />,
@@ -87,7 +87,7 @@ describe('PromoteToAdminButton', () => {
     fireEvent.click(screen.getByRole('button', { name: '管理者に昇格' }))
 
     expect(await screen.findByRole('dialog')).toBeTruthy()
-    expect(screen.getByText(/「ろぴ」さんを管理者に昇格/)).toBeTruthy()
+    expect(screen.getByText(/「テスト太郎」さんを管理者に昇格/)).toBeTruthy()
 
     fireEvent.click(screen.getByRole('button', { name: '昇格する' }))
 
@@ -104,7 +104,7 @@ describe('PromoteToAdminButton', () => {
     render(
       <PromoteToAdminButton
         memberId="member-42"
-        displayName="ろぴ"
+        displayName="テスト太郎"
         currentRole="member"
         myRole="admin"
       />,

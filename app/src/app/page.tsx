@@ -1,5 +1,5 @@
-import { headers } from 'next/headers'
 import { createSupabaseServerClient } from '@/lib/supabase/server'
+import { decodeAccessTokenClaims } from '@/lib/jwt-claims'
 import { Header } from '@/components/Header'
 import {
   RecentMinutesSection,
@@ -21,14 +21,19 @@ export const metadata = {
 // データは家族単位（RLS）なので未認証では空にフォールバックし、
 // Header は isAuthenticated=false で「ログイン」リンクを表示する。
 // CTA / SubNav の保護パスへのリンクは middleware が next 付きで /login へ誘導する。
+//
+// family 参加判定は JWT claims（access_token の family_id）で行う。middleware が注入する
+// x-family-id ヘッダーはクライアントから詐称可能なうえ、早期 return するパスでは設定されない
+// ため判定材料にしない（ConsentGate と同じ方式に統一）。
 export default async function HomePage() {
-  const hdrs = await headers()
-  const familyId = hdrs.get('x-family-id')
-
   const supabase = await createSupabaseServerClient()
   const {
     data: { user },
   } = await supabase.auth.getUser()
+  const {
+    data: { session },
+  } = await supabase.auth.getSession()
+  const familyId = decodeAccessTokenClaims(session?.access_token)?.family_id ?? null
 
   let familyName = ''
   let myDisplayName = ''

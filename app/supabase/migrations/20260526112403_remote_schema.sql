@@ -787,7 +787,7 @@ COMMENT ON COLUMN "public"."templates"."whiteout_boxes" IS 'パスB白塗り座�
 
 
 
-COMMENT ON COLUMN "public"."templates"."fixed_texts" IS 'C-2（固定テキスト・あめ要望の新機能）。FixedText[]（{name,value,bbox:{page,x,y,w,h},font}・左上原点 pt）。
+COMMENT ON COLUMN "public"."templates"."fixed_texts" IS 'C-2（固定テキスト）。FixedText[]（{name,value,bbox:{page,x,y,w,h},font}・左上原点 pt）。
    用途: 会議名・参加者など常時同一値を overlay 出力へ常時注入。記入欄 fields とは分離（fieldsVersion を汚さない）。
    ※白塗り whiteout_boxes / 既存 whiteout_C2 設計とは無関係。null = 固定テキスト未設定';
 

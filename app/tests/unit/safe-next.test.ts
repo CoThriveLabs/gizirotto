@@ -47,4 +47,23 @@ describe('sanitizeRelativeNext', () => {
     expect(sanitizeRelativeNext('/minutes\x00new')).toBeNull()
     expect(sanitizeRelativeNext('/minutes\nnew')).toBeNull()
   })
+
+  it('非正規化パス（/..//evil.com）は正規化すると // で始まるため null', () => {
+    expect(sanitizeRelativeNext('/..//evil.com')).toBeNull()
+  })
+
+  it('親ディレクトリ参照はルート基準に正規化して返す', () => {
+    expect(sanitizeRelativeNext('/../../minutes')).toBe('/minutes')
+    expect(sanitizeRelativeNext('/minutes/../templates')).toBe('/templates')
+  })
+
+  it('カレント参照・重複セグメントも正規化される', () => {
+    expect(sanitizeRelativeNext('/minutes/./new')).toBe('/minutes/new')
+  })
+
+  it('query / hash は正規化後も保持される', () => {
+    expect(sanitizeRelativeNext('/minutes/../templates?a=1#frag')).toBe(
+      '/templates?a=1#frag',
+    )
+  })
 })
