@@ -8,14 +8,19 @@ import { HeaderAccountMenu } from '@/components/HeaderAccountMenu'
  * 全ページ共通ヘッダー。
  * - キャラ画像（gizirottokun）を大きめ / ロゴ画像（gizirotto-logo）を小さめにしてバランス調整。
  * - familyName が空文字なら家族名は非表示（取得経路が無いページ向け）。
+ * - アカウントメニュー / ログインリンクの出し分けは isAuthenticated で行う。displayName は
+ *   アバターの表示名にのみ使う（family 未参加でログイン済みだと空文字になりうるため、
+ *   displayName の有無を認証状態の判定に使わないこと）。
  * - ホームリンクは (dashboard)/layout 側で main content と同じ container 内に配置する。
  */
 export function Header({
   familyName,
   displayName,
+  isAuthenticated,
 }: {
   familyName: string
   displayName: string
+  isAuthenticated: boolean
 }) {
   return (
     <header className="border-b border-gizirotto-blue-100 bg-white sticky top-0 z-30">
@@ -51,11 +56,8 @@ export function Header({
               {familyName}
             </span>
           )}
-          {displayName ? (
-            <HeaderAccountMenu
-              displayName={displayName}
-              familyName={familyName}
-            />
+          {isAuthenticated ? (
+            <HeaderAccountMenu displayName={displayName} />
           ) : (
             // 未ログイン時はアバターの代わりにログイン誘導リンクを出す。
             // ログイン後にホームへ戻る挙動を保つため next=/ を明示。

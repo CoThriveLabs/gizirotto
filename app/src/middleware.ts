@@ -4,6 +4,7 @@ import { decodeAccessTokenClaims } from '@/lib/jwt-claims'
 import { ipBurstLimit } from '@/lib/ratelimit'
 import { getClientIp } from '@/lib/client-ip'
 import { resolveAllowedOrigin } from '@/lib/cors'
+import { sanitizeRelativeNext } from '@/lib/safe-next'
 
 type CookieToSet = { name: string; value: string; options: CookieOptions }
 
@@ -33,6 +34,26 @@ function isJsonClient(req: NextRequest): boolean {
   return accept.includes('application/json') || req.nextUrl.pathname.startsWith('/api/')
 }
 
+/**
+ * supabase の setAll がリフレッシュ済みトークンを baseResponse の cookie に載せるため、
+ * 素の NextResponse.redirect を返すとその cookie が失われてセッションが巻き戻る。
+ * middleware から redirect するときは必ずこの関数を通す。
+ *
+ * Gotcha: set(c.name, c.value) と書くと maxAge / path / sameSite などの属性が全て落ちる。
+ * 特に maxAge が消えるとセッション cookie 化し、ブラウザを閉じるとログアウトされる。
+ * getAll() が返す ResponseCookie オブジェクトをそのまま渡すこと。
+ */
+function redirectPreservingCookies(
+  redirectTo: URL,
+  baseResponse: NextResponse,
+): NextResponse {
+  const redirect = NextResponse.redirect(redirectTo)
+  baseResponse.cookies.getAll().forEach((c) => {
+    redirect.cookies.set(c)
+  })
+  return redirect
+}
+
 function unauthorizedOrRedirect(
   req: NextRequest,
   redirectTo: URL,
@@ -42,11 +63,7 @@ function unauthorizedOrRedirect(
   if (isJsonClient(req)) {
     return NextResponse.json({ error: errorCode }, { status: 401 })
   }
-  const redirect = NextResponse.redirect(redirectTo)
-  baseResponse.cookies.getAll().forEach((c) => {
-    redirect.cookies.set(c.name, c.value)
-  })
-  return redirect
+  return redirectPreservingCookies(redirectTo, baseResponse)
 }
 
 export async function middleware(request: NextRequest) {
@@ -183,6 +200,10 @@ export async function middleware(request: NextRequest) {
     if (pathname === '/minutes/new' || pathname.startsWith('/minutes/new/')) {
       return response
     }
+    // 同意記録は family 参加より前段階のフロー。route.ts 側で認証チェック済み。
+    if (pathname === '/api/consent') {
+      return response
+    }
     return unauthorizedOrRedirect(
       request,
       new URL(FAMILY_SETUP_PATH, request.url),
@@ -192,7 +213,14 @@ export async function middleware(request: NextRequest) {
   }
 
   if (pathname === FAMILY_SETUP_PATH) {
-    return NextResponse.redirect(new URL('/', request.url))
+    // 家族参加済みで /family/setup に来たケース。別タブで先に家族を作った / 往復中に
+    // JWT claim が反映された場合、?next= が下書き復元の着地点（/minutes/new/manual?...）
+    // なので捨てるとユーザーが行き止まりになる。同オリジン相対パスと確認できたら復帰させる。
+    const nextParam = sanitizeRelativeNext(request.nextUrl.searchParams.get('next'))
+    // next が自分自身を指していると redirect が往復するので、その場合はホームへ倒す。
+    const target =
+      nextParam && !nextParam.startsWith(FAMILY_SETUP_PATH) ? nextParam : '/'
+    return redirectPreservingCookies(new URL(target, request.url), response)
   }
 
   response.headers.set('x-family-id', familyIdFromJwt)

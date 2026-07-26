@@ -16,7 +16,9 @@ import {
 } from '@/lib/utils/form-cache'
 import {
   guestAdjustDraftFormId,
+  guestAdjustReturnPath,
   GUEST_ADJUST_DRAFT_RESTORE_PATH,
+  touchGuestAdjustDraft,
 } from '@/lib/utils/guest-adjust-draft'
 import type { GuestMinuteDraft } from '@/app/(dashboard)/minutes/[id]/adjust/AdjustView'
 
@@ -26,6 +28,9 @@ interface Props {
   fields: string[]
   /** When true the user is not logged in. createMinute is skipped; redirects to the guest AdjustView entry. */
   isGuest?: boolean
+  /** When true the user is logged in but has not joined/created a family yet. createMinute would
+   *  fail with NOT_IN_FAMILY, so this bounces to /family/setup instead (with a next back here). */
+  needsFamilySetup?: boolean
 }
 
 /**
@@ -38,12 +43,20 @@ interface Props {
  *   - 未ログイン (isGuest=true): createMinute を呼ばず、ゲスト向け AdjustView 到達ルート
  *     （/minutes/new/adjust）へ即遷移する。ログインユーザーと同じ画面で builtin レイアウトに
  *     直接記入できる（保存はそちら側で「ログインして保存」に出し分け）。
+ *   - ログイン済みだが家族未参加 (needsFamilySetup=true): createMinute を呼ばず
+ *     /family/setup?next=... へ即遷移する（isGuest より後に判定するので isGuest=true が優先）。
  *
  *   なぜ client から呼ぶか:
  *     createMinute 内部の `revalidatePath('/minutes')` が server component の render 中に
  *     発火すると Next.js が Runtime Error を投げるため。client mount 起点なら抵触しない。
  */
-export function ManualBootstrap({ templateId, templateName, fields, isGuest = false }: Props) {
+export function ManualBootstrap({
+  templateId,
+  templateName,
+  fields,
+  isGuest = false,
+  needsFamilySetup = false,
+}: Props) {
   const router = useRouter()
   const { showToast } = useToast()
   const startedRef = useRef(false)
@@ -55,6 +68,21 @@ export function ManualBootstrap({ templateId, templateName, fields, isGuest = fa
     // 未ログインはゲスト向け AdjustView 到達ルートへ即遷移（createMinute は呼ばない）。
     if (isGuest) {
       router.replace(`/minutes/new/adjust?template_id=${templateId}`)
+      return
+    }
+
+    // ログイン済みだが family 未参加。createMinute は NOT_IN_FAMILY で必ず失敗するため、
+    // 先に家族作成/参加へ寄り道させる。戻り先はこのページ自身（?next= で往復）。
+    // 下書きの TTL をここで打ち直し、往復のたびに新しい猶予を与える。
+    // 判定順（isGuest → needsFamilySetup → createMinute）は保ったまま、StrictMode の
+    // 二重 mount で TTL 打ち直し + replace が 2 回走らないよう startedRef で単発化する。
+    if (needsFamilySetup) {
+      if (startedRef.current) return
+      startedRef.current = true
+      touchGuestAdjustDraft(templateId)
+      router.replace(
+        `/family/setup?next=${encodeURIComponent(guestAdjustReturnPath(templateId))}`,
+      )
       return
     }
 

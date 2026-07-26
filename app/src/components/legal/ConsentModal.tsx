@@ -1,24 +1,42 @@
 'use client'
 
 import { useState, useEffect, useCallback } from 'react'
-import { useRouter } from 'next/navigation'
+import { useRouter, usePathname } from 'next/navigation'
 
 /**
  * 初回ログイン同意モーダル。
  * - バックドロップクリック / Esc / x ボタンでは閉じない（強制表示）。
  * - 利用規約・プライバシーポリシー両方のチェックで「同意して始める」を活性化。
  * - 「利用規約」「プライバシーポリシー」テキストはリンク（新規タブ）。
- * - 同意成功時は /api/consent に POST し、画面を refresh して通常表示に戻る。
+ * - 同意成功時は /api/consent に POST する。家族未参加（needsFamilySetup）かつホーム画面
+ *   （pathname === '/'）で同意した場合のみ /family/setup へ replace し、それ以外は現在の
+ *   ルートを refresh して通常表示に戻る。
+ *
+ * pathname を '/' 完全一致で見る理由: このモーダルは root layout にぶら下がっており、
+ * /family/join（招待リンク）や /minutes/new/adjust（ゲスト下書き復元）等、既に目的地のある
+ * 画面にも表示されうる。startsWith 等で緩めると、招待コード付き URL や下書き復元中の同意で
+ * その目的地への遷移を横取りしてしまう。
  */
-export function ConsentModal() {
+export function ConsentModal({ needsFamilySetup }: { needsFamilySetup: boolean }) {
   const router = useRouter()
+  const pathname = usePathname()
   const [termsAgreed, setTermsAgreed] = useState(false)
   const [privacyAgreed, setPrivacyAgreed] = useState(false)
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  /**
+   * 同意記録に成功したら自前で閉じる。
+   *
+   * このモーダルを出す ConsentGate は root layout 直下の server component で、App Router は
+   * 共有レイアウトをクライアント遷移で再描画しない。つまり router.replace() だけでは
+   * ConsentGate が再評価されず、全画面オーバーレイ（fixed inset-0）が遷移先に残り続けて
+   * 操作不能になる。親の再描画に依存せず、モーダル自身が閉じられるようにする。
+   */
+  const [done, setDone] = useState(false)
 
   // Esc キーで閉じない（preventDefault）
   useEffect(() => {
+    if (done) return
     const handler = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
         e.preventDefault()
@@ -27,16 +45,18 @@ export function ConsentModal() {
     }
     window.addEventListener('keydown', handler, true)
     return () => window.removeEventListener('keydown', handler, true)
-  }, [])
+  }, [done])
 
-  // body スクロール抑制
+  // body スクロール抑制。done 後もこの component は mount されたまま残りうる（上記参照）ので、
+  // unmount の cleanup ではなく done を依存に入れて解除する。
   useEffect(() => {
+    if (done) return
     const original = document.body.style.overflow
     document.body.style.overflow = 'hidden'
     return () => {
       document.body.style.overflow = original
     }
-  }, [])
+  }, [done])
 
   const canSubmit = termsAgreed && privacyAgreed && !submitting
 
@@ -54,12 +74,24 @@ export function ConsentModal() {
         const json = (await res.json().catch(() => ({}))) as { error?: string }
         throw new Error(json.error ?? '同意の記録に失敗しました')
       }
+      // 遷移するかどうかに関わらず、まずモーダル自身を閉じる（done の宣言部を参照）。
+      setDone(true)
+      if (needsFamilySetup && pathname === '/') {
+        // refresh は「現在のルート」を対象にするため replace と競合する。遷移先の
+        // /family/setup は最新の RSC で描画されるので、この経路では refresh を呼ばない。
+        router.replace('/family/setup')
+        return
+      }
+      // 同じルートに留まる経路。ConsentGate は server component なので、RSC を取り直させて
+      // 次回以降の描画で ConsentGate に null を返させる。
       router.refresh()
     } catch (e) {
       setError(e instanceof Error ? e.message : '同意の記録に失敗しました')
       setSubmitting(false)
     }
-  }, [canSubmit, termsAgreed, privacyAgreed, router])
+  }, [canSubmit, termsAgreed, privacyAgreed, router, needsFamilySetup, pathname])
+
+  if (done) return null
 
   return (
     <div

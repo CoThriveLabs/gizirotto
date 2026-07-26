@@ -1,5 +1,5 @@
-import { headers } from 'next/headers'
 import { createSupabaseServerClient } from '@/lib/supabase/server'
+import { decodeAccessTokenClaims } from '@/lib/jwt-claims'
 import { Header } from '@/components/Header'
 import {
   RecentMinutesSection,
@@ -7,6 +7,7 @@ import {
 } from './(home)/_components/RecentMinutesSection'
 import { CTASection } from './(home)/_components/CTASection'
 import { SubNav } from './(home)/_components/SubNav'
+import { FamilySetupNotice } from './(home)/_components/FamilySetupNotice'
 
 export const dynamic = 'force-dynamic'
 
@@ -18,16 +19,21 @@ export const metadata = {
 
 // 未ログイン / 家族未設定でも到達するホーム画面。
 // データは家族単位（RLS）なので未認証では空にフォールバックし、
-// Header の displayName 空 → 「ログインお願いします」表示、
+// Header は isAuthenticated=false で「ログイン」リンクを表示する。
 // CTA / SubNav の保護パスへのリンクは middleware が next 付きで /login へ誘導する。
+//
+// family 参加判定は JWT claims（access_token の family_id）で行う。middleware が注入する
+// x-family-id ヘッダーはクライアントから詐称可能なうえ、早期 return するパスでは設定されない
+// ため判定材料にしない（ConsentGate と同じ方式に統一）。
 export default async function HomePage() {
-  const hdrs = await headers()
-  const familyId = hdrs.get('x-family-id')
-
   const supabase = await createSupabaseServerClient()
   const {
     data: { user },
   } = await supabase.auth.getUser()
+  const {
+    data: { session },
+  } = await supabase.auth.getSession()
+  const familyId = decodeAccessTokenClaims(session?.access_token)?.family_id ?? null
 
   let familyName = ''
   let myDisplayName = ''
@@ -87,10 +93,11 @@ export default async function HomePage() {
 
   return (
     <div className="min-h-screen flex flex-col">
-      <Header familyName={familyName} displayName={myDisplayName} />
+      <Header familyName={familyName} displayName={myDisplayName} isAuthenticated={!!user} />
       <main className="flex-1 flex flex-col justify-between max-w-7xl w-full mx-auto px-4 py-12 pb-32 md:pb-12">
         <RecentMinutesSection minutes={minutesWithThumbs} />
         <div className="flex flex-col gap-10">
+          {user && !familyId && <FamilySetupNotice />}
           <CTASection />
           <SubNav />
         </div>

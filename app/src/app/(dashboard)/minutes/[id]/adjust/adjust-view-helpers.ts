@@ -92,6 +92,25 @@ export function resolveWhiteoutRawImageUrl(
 }
 
 /**
+ * スマホ用インスペクタ（下部固定モーダル）が選択中 bbox に被さらないための
+ * 自動スクロール量を求める純関数。
+ *
+ * 「選択枠の下辺」と「モーダルの上辺」の間に最低 minGap px 空くように、
+ * 不足分だけページを上へスクロールする量（window.scrollBy の top に渡す正の値）を返す。
+ * 既に十分な余白があるときは 0（呼び出し側はスクロールしない）。
+ */
+export function computeAutoScrollDelta(args: {
+  selectionBottom: number
+  modalTop: number
+  minGap: number
+}): number {
+  const { selectionBottom, modalTop, minGap } = args
+  const gap = modalTop - selectionBottom
+  if (gap >= minGap) return 0
+  return minGap - gap
+}
+
+/**
  * dynamicFieldValues（client canvas 合成に乗せる記入値）に、ある field を含めるか判定する純関数。
  *
  * ── 不変条件: A∩B=∅ を構造保証する ──────────────────────────────────────

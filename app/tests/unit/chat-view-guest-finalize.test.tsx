@@ -11,9 +11,17 @@
  */
 import React from 'react'
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { render, cleanup, act, waitFor, screen, fireEvent } from '@testing-library/react'
+import {
+  render,
+  renderHook,
+  cleanup,
+  act,
+  waitFor,
+  screen,
+  fireEvent,
+} from '@testing-library/react'
 import { makeFormCacheKey } from '@/lib/utils/form-cache'
-import { guestChatDraftFormId } from '@/lib/utils/guest-adjust-draft'
+import { guestChatDraftFormId, guestAdjustDraftFormId } from '@/lib/utils/guest-adjust-draft'
 
 function readChatDraftValues(templateId: string): {
   content: Record<string, string>
@@ -28,8 +36,9 @@ function readChatDraftValues(templateId: string): {
 }
 
 const pushMock = vi.fn()
+const replaceMock = vi.fn()
 vi.mock('next/navigation', () => ({
-  useRouter: () => ({ push: pushMock, replace: vi.fn(), refresh: vi.fn(), back: vi.fn() }),
+  useRouter: () => ({ push: pushMock, replace: replaceMock, refresh: vi.fn(), back: vi.fn() }),
   usePathname: () => '/minutes/new/chat',
 }))
 
@@ -164,6 +173,8 @@ function makeFetchMock(
 window.HTMLElement.prototype.scrollTo = vi.fn()
 
 import { ChatView } from '@/app/(dashboard)/minutes/new/chat/ChatView'
+import { useChatFinalize } from '@/app/(dashboard)/minutes/new/chat/use-chat-finalize'
+import type { UseGuestTurnstileGate } from '@/hooks/useGuestTurnstileGate'
 
 const DEFAULT_PROPS = {
   templateId: '00000000-0000-0000-0000-000000000001',
@@ -178,6 +189,7 @@ beforeEach(() => {
   extractFieldsFromChatMock.mockReset()
   createMinuteMock.mockReset()
   pushMock.mockReset()
+  replaceMock.mockReset()
   turnstileControls.autoToken = true
   turnstileControls.latestOnToken = null
   turnstileControls.resetMock.mockReset()
@@ -195,10 +207,23 @@ afterEach(() => {
   sessionStorage.clear()
 })
 
-async function sendOneUserMessage(fetchMock: ReturnType<typeof makeFetchMock>) {
+/**
+ * ChatView を描画し、kick-off 完了後にユーザー発言を 1 件送って
+ * 「議事録にする」が押せる状態まで進める。
+ */
+async function sendOneUserMessage(
+  fetchMock: ReturnType<typeof makeFetchMock>,
+  { isGuest = true, needsFamilySetup = false }: { isGuest?: boolean; needsFamilySetup?: boolean } = {},
+) {
   await act(async () => {
-    render(<ChatView {...DEFAULT_PROPS} isGuest />)
+    render(<ChatView {...DEFAULT_PROPS} isGuest={isGuest} needsFamilySetup={needsFamilySetup} />)
   })
+  if (!isGuest) {
+    // ログイン経路は kick-off 前にサーバ側 chat session を作る。
+    await waitFor(() => {
+      expect(createChatSessionMock).toHaveBeenCalled()
+    })
+  }
   await waitFor(() => {
     expect(fetchMock).toHaveBeenCalledTimes(1)
   })
@@ -493,35 +518,116 @@ describe('ChatView — GA6 guest AI daily limit (429)', () => {
   })
 })
 
+describe('ChatView — needsFamilySetup=true の onFinalize', () => {
+  it('createMinute を呼ばず、家族未参加向け save-draft を書いて /family/setup?next=... へ replace する', async () => {
+    const fetchMock = makeFetchMock()
+    global.fetch = fetchMock
+    await sendOneUserMessage(fetchMock, { isGuest: false, needsFamilySetup: true })
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: '議事録にする' }))
+    })
+
+    await waitFor(() => {
+      expect(replaceMock).toHaveBeenCalledWith(
+        `/family/setup?next=${encodeURIComponent(
+          `/minutes/new/manual?template_id=${DEFAULT_PROPS.templateId}`,
+        )}`,
+      )
+    })
+    expect(createMinuteMock).not.toHaveBeenCalled()
+    expect(
+      localStorage.getItem(makeFormCacheKey(guestAdjustDraftFormId(DEFAULT_PROPS.templateId))),
+    ).not.toBeNull()
+  })
+
+  it('replace 後もボタンは無効のまま（finalizing を戻さない）', async () => {
+    const fetchMock = makeFetchMock()
+    global.fetch = fetchMock
+    await sendOneUserMessage(fetchMock, { isGuest: false, needsFamilySetup: true })
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: '議事録にする' }))
+    })
+    await waitFor(() => {
+      expect(replaceMock).toHaveBeenCalledTimes(1)
+    })
+
+    // router.replace は unmount を伴わないため、遷移待ちの間にボタンが再活性化すると
+    // 連打で AI 抽出（有料 API）が二重に走る。遷移後も disabled + '準備中…' のままであること。
+    // （ref 再入ガード自体は下の hook 単体テストで検証する。disabled なボタンは click が
+    //   発火しないため、UI 経由では ref のガードまで到達しない。）
+    const button = screen.getByRole('button', { name: /議事録にする|準備中…/ })
+    expect(button).toBeDisabled()
+    expect(button.textContent).toBe('準備中…')
+
+    await act(async () => {
+      fireEvent.click(button)
+    })
+
+    expect(extractFieldsFromChatMock).toHaveBeenCalledTimes(1)
+    expect(replaceMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('isGuest=true が優先され、needsFamilySetup=true でもゲスト adjust ルートへ遷移する', async () => {
+    const fetchMock = makeFetchMock()
+    global.fetch = fetchMock
+    await sendOneUserMessage(fetchMock, { isGuest: true, needsFamilySetup: true })
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: '議事録にする' }))
+    })
+
+    await waitFor(() => {
+      expect(pushMock).toHaveBeenCalledWith(
+        `/minutes/new/adjust?template_id=${DEFAULT_PROPS.templateId}`,
+      )
+    })
+    expect(createMinuteMock).not.toHaveBeenCalled()
+    expect(
+      localStorage.getItem(makeFormCacheKey(guestAdjustDraftFormId(DEFAULT_PROPS.templateId))),
+    ).toBeNull()
+  })
+
+  it('ゲスト経路でも push 後にボタンは無効のまま（finalizing を戻さない）', async () => {
+    const fetchMock = makeFetchMock()
+    global.fetch = fetchMock
+    await sendOneUserMessage(fetchMock, { isGuest: true })
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: '議事録にする' }))
+    })
+    await waitFor(() => {
+      expect(pushMock).toHaveBeenCalledTimes(1)
+    })
+
+    const extractCallsAfterFirst = fetchMock.mock.calls.filter(
+      (call) =>
+        typeof call[0] === 'string' && call[0].includes('/api/minutes/chat/extract-fields'),
+    ).length
+
+    const button = screen.getByRole('button', { name: /議事録にする|準備中…/ })
+    expect(button).toBeDisabled()
+
+    await act(async () => {
+      fireEvent.click(button)
+    })
+
+    const extractCallsAfterSecond = fetchMock.mock.calls.filter(
+      (call) =>
+        typeof call[0] === 'string' && call[0].includes('/api/minutes/chat/extract-fields'),
+    ).length
+    expect(extractCallsAfterSecond).toBe(extractCallsAfterFirst)
+    expect(pushMock).toHaveBeenCalledTimes(1)
+  })
+})
+
 describe('ChatView — isGuest=false（既定）の onFinalize は不変', () => {
   it('createMinute を呼び、guest-chat-draft キーは書き込まない', async () => {
     const fetchMock = makeFetchMock()
     global.fetch = fetchMock
     createMinuteMock.mockResolvedValue({ id: 'm-1' })
-
-    await act(async () => {
-      render(<ChatView {...DEFAULT_PROPS} isGuest={false} />)
-    })
-    await waitFor(() => {
-      expect(createChatSessionMock).toHaveBeenCalled()
-    })
-    await waitFor(() => {
-      expect(fetchMock).toHaveBeenCalledTimes(1)
-    })
-
-    const textarea = screen.getByPlaceholderText(/メッセージを入力/)
-    await act(async () => {
-      fireEvent.change(textarea, { target: { value: 'テストメッセージ' } })
-    })
-    await act(async () => {
-      fireEvent.keyDown(textarea, { key: 'Enter', ctrlKey: true })
-    })
-    await waitFor(() => {
-      expect(fetchMock).toHaveBeenCalledTimes(2)
-    })
-    await waitFor(() => {
-      expect(screen.getByRole('button', { name: '議事録にする' })).not.toBeDisabled()
-    })
+    await sendOneUserMessage(fetchMock, { isGuest: false })
 
     await act(async () => {
       fireEvent.click(screen.getByRole('button', { name: '議事録にする' }))
@@ -537,6 +643,144 @@ describe('ChatView — isGuest=false（既定）の onFinalize は不変', () =>
     for (const [, init] of fetchMock.mock.calls) {
       const parsed = JSON.parse((init as RequestInit).body as string)
       expect(Object.prototype.hasOwnProperty.call(parsed, 'turnstileToken')).toBe(false)
+    }
+  })
+})
+
+/**
+ * useChatFinalize の再入ガード（finalizingRef）を hook 単体で検証する。
+ *
+ * UI 経由（fireEvent.click）ではボタンが disabled={finalizing} で先に閉じてしまい、
+ * onFinalize が 2 回呼ばれる状況自体を作れない。ここでは返ってきた onFinalize を
+ * await せずに連続 2 回呼び、1 回目の await 中に 2 回目が入っても AI 抽出（有料 API）が
+ * 二重に走らないことを確かめる。
+ */
+function makeTurnstileGateStub(): UseGuestTurnstileGate {
+  return {
+    onToken: vi.fn(),
+    consumeToken: vi.fn().mockResolvedValue('stub-token'),
+    reset: vi.fn(),
+    bindWidget: vi.fn(),
+  }
+}
+
+function renderFinalizeHook(
+  overrides: Partial<Parameters<typeof useChatFinalize>[0]> = {},
+) {
+  const setErrorMsg = vi.fn()
+  const setLimitModal = vi.fn()
+  const clearSnapshot = vi.fn()
+  const view = renderHook(() =>
+    useChatFinalize({
+      templateId: DEFAULT_PROPS.templateId,
+      templateName: DEFAULT_PROPS.templateName,
+      mode: DEFAULT_PROPS.mode,
+      fields: DEFAULT_PROPS.fields,
+      messages: [{ role: 'user', content: 'テストメッセージ' }],
+      turnstileGate: makeTurnstileGateStub(),
+      clearSnapshot,
+      setErrorMsg,
+      setLimitModal,
+      ...overrides,
+    }),
+  )
+  return { ...view, setErrorMsg, setLimitModal, clearSnapshot }
+}
+
+function countExtractFetches(fetchMock: ReturnType<typeof makeFetchMock>): number {
+  return fetchMock.mock.calls.filter(
+    (call) =>
+      typeof call[0] === 'string' && call[0].includes('/api/minutes/chat/extract-fields'),
+  ).length
+}
+
+describe('useChatFinalize — 再入ガード（hook 単体）', () => {
+  it('ゲスト経路: onFinalize を await せず 2 回呼んでも extract-fields は 1 回だけ', async () => {
+    const fetchMock = makeFetchMock({ ok: true, values: { agenda: '抽出結果' } })
+    global.fetch = fetchMock
+    const { result } = renderFinalizeHook({ isGuest: true })
+
+    await act(async () => {
+      const first = result.current.onFinalize()
+      const second = result.current.onFinalize()
+      await Promise.all([first, second])
+    })
+
+    expect(countExtractFetches(fetchMock)).toBe(1)
+    expect(pushMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('family 未参加経路: onFinalize を await せず 2 回呼んでも extractFieldsFromChat は 1 回だけ', async () => {
+    const fetchMock = makeFetchMock()
+    global.fetch = fetchMock
+    extractFieldsFromChatMock.mockResolvedValue({ values: { agenda: '抽出結果' } })
+    const { result } = renderFinalizeHook({ needsFamilySetup: true })
+
+    await act(async () => {
+      const first = result.current.onFinalize()
+      const second = result.current.onFinalize()
+      await Promise.all([first, second])
+    })
+
+    expect(extractFieldsFromChatMock).toHaveBeenCalledTimes(1)
+    expect(replaceMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('ログイン経路: onFinalize を await せず 2 回呼んでも createMinute は 1 回だけ', async () => {
+    const fetchMock = makeFetchMock()
+    global.fetch = fetchMock
+    extractFieldsFromChatMock.mockResolvedValue({ values: { agenda: '抽出結果' } })
+    createMinuteMock.mockResolvedValue({ id: 'm-1' })
+    const { result } = renderFinalizeHook()
+
+    await act(async () => {
+      const first = result.current.onFinalize()
+      const second = result.current.onFinalize()
+      await Promise.all([first, second])
+    })
+
+    expect(extractFieldsFromChatMock).toHaveBeenCalledTimes(1)
+    expect(createMinuteMock).toHaveBeenCalledTimes(1)
+    expect(pushMock).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('useChatFinalize — 遷移前に例外が出た場合', () => {
+  it('sessionStorage 書き込みが throw しても finalizing が戻り、再試行できる', async () => {
+    // 既定の fetch モックは extract-fields を失敗させる → extractFailed=true になり
+    // 遷移直前に sessionStorage.setItem('minutes:draft-warning') が走る経路。
+    const fetchMock = makeFetchMock()
+    global.fetch = fetchMock
+    const originalSetItem = Storage.prototype.setItem
+    const setItemSpy = vi
+      .spyOn(Storage.prototype, 'setItem')
+      .mockImplementation(function (this: Storage, key: string, value: string) {
+        if (key === 'minutes:draft-warning') throw new Error('QuotaExceededError')
+        return originalSetItem.call(this, key, value)
+      })
+    try {
+      const { result, setErrorMsg } = renderFinalizeHook({ isGuest: true })
+
+      await act(async () => {
+        await result.current.onFinalize()
+      })
+
+      // 遷移していない = 「準備中…」で固まらせず押し直せる状態に戻すこと。
+      expect(pushMock).not.toHaveBeenCalled()
+      expect(result.current.finalizing).toBe(false)
+      // 無言で戻すのではなく理由を出す。
+      expect(setErrorMsg).toHaveBeenCalledWith(
+        expect.stringContaining('保存に失敗しました'),
+      )
+
+      // ref も戻っているので 2 回目の押下で処理が再度走る。
+      setItemSpy.mockRestore()
+      await act(async () => {
+        await result.current.onFinalize()
+      })
+      expect(pushMock).toHaveBeenCalledTimes(1)
+    } finally {
+      setItemSpy.mockRestore()
     }
   })
 })

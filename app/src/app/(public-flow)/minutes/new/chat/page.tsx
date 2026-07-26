@@ -4,6 +4,7 @@ import { isBuiltinTemplate } from '@/lib/templates/builtin-ids'
 import { ChatView } from '@/app/(dashboard)/minutes/new/chat/ChatView'
 import type { TemplateField } from '@/app/(dashboard)/minutes/new/chat/ChatView'
 import { createSupabaseServerClient } from '@/lib/supabase/server'
+import { decodeAccessTokenClaims } from '@/lib/jwt-claims'
 
 export const dynamic = 'force-dynamic'
 
@@ -40,6 +41,9 @@ export default async function MinutesNewChatPage({
   ])
   const { data: { user } } = await supabase.auth.getUser()
   const isGuest = !user
+  // family 判定は JWT claims から行う（x-family-id ヘッダーはこのパスでは注入されないため）。
+  const { data: { session } } = await supabase.auth.getSession()
+  const needsFamilySetup = !isGuest && !decodeAccessTokenClaims(session?.access_token)?.family_id
   const fields = extractFields(template.fields)
 
   return (
@@ -59,6 +63,7 @@ export default async function MinutesNewChatPage({
         mode={mode}
         fields={fields}
         isGuest={isGuest}
+        needsFamilySetup={needsFamilySetup}
       />
 
       <p className="text-xs text-gray-400 text-center pt-2">

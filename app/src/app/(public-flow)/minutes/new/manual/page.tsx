@@ -2,6 +2,7 @@ import { notFound, redirect } from 'next/navigation'
 import { getTemplate } from '@/server/templates'
 import { isBuiltinTemplate } from '@/lib/templates/builtin-ids'
 import { createSupabaseServerClient } from '@/lib/supabase/server'
+import { decodeAccessTokenClaims } from '@/lib/jwt-claims'
 import { ManualBootstrap } from '@/app/(dashboard)/minutes/new/manual/ManualBootstrap'
 
 export const dynamic = 'force-dynamic'
@@ -34,6 +35,10 @@ export default async function MinutesNewManualPage({
   const supabase = await createSupabaseServerClient()
   const { data: { user } } = await supabase.auth.getUser()
 
+  // family 判定は JWT claims から行う（x-family-id ヘッダーはこのパスでは注入されないため）。
+  const { data: { session } } = await supabase.auth.getSession()
+  const familyId = decodeAccessTokenClaims(session?.access_token)?.family_id
+
   const template = await getTemplate(templateId)
   const fields = extractFieldNames(template.fields)
 
@@ -43,6 +48,7 @@ export default async function MinutesNewManualPage({
       templateName={template.name}
       fields={fields}
       isGuest={!user}
+      needsFamilySetup={!!user && !familyId}
     />
   )
 }

@@ -25,8 +25,6 @@ import { LogoutConfirmModal } from '@/app/(dashboard)/settings/_components/Logou
 export interface HeaderAccountMenuProps {
   /** アバターに表示する名前 */
   displayName: string
-  /** 家族名（v2 でパネル内表示用に予約・v1 未使用） */
-  familyName?: string
 }
 
 export function HeaderAccountMenu({ displayName }: HeaderAccountMenuProps) {
@@ -97,7 +95,7 @@ export function HeaderAccountMenu({ displayName }: HeaderAccountMenuProps) {
         onClick={() => setOpen((v) => !v)}
         aria-haspopup="menu"
         aria-expanded={open}
-        aria-label={`${displayName} のアカウントメニューを開く`}
+        aria-label={displayName ? `${displayName} のアカウントメニューを開く` : 'アカウントメニューを開く'}
         className="rounded-full hover:opacity-80 shrink-0 focus:outline-none focus:ring-2 focus:ring-gizirotto-blue-300"
       >
         <MemberAvatar displayName={displayName} size="sm" />

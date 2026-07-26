@@ -6,7 +6,7 @@ import { LogoutConfirmModal } from './LogoutConfirmModal'
 
 /**
  * ログアウトボタン。
- * クリックで確認モーダル表示 → 「はい」で /api/auth/logout に POST → ホーム遷移 + SSR 再評価。
+ * クリックで確認モーダル表示 → 確定ボタンで /api/auth/logout に POST → ホーム遷移 + SSR 再評価。
  * 401（既ログアウト）は成功扱い、500 系のみモーダル内エラー表示。
  */
 export function LogoutButton() {

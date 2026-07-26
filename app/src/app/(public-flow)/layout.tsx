@@ -51,7 +51,7 @@ export default async function PublicFlowLayout({
   return (
     <ToastProvider>
       <div className="min-h-screen flex flex-col pb-16 md:pb-0">
-        <Header familyName={familyName} displayName={displayName} />
+        <Header familyName={familyName} displayName={displayName} isAuthenticated={!!user} />
         <div className="max-w-4xl mx-auto px-4 pt-3 w-full">
           <Link
             href="/"

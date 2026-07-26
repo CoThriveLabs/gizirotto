@@ -16,6 +16,13 @@ export interface EditorField {
 
 /** 選択中 bbox の画面位置（フローティング nudge の近傍配置用・§A3）。 */
 export interface SelectionGeom {
+  /**
+   * この geom がどの field のものかを示す name。
+   * 親の effect は子 effect より後に走るため、選択切替直後の親 effect は「1 つ前の選択の geom」を
+   * クロージャに掴んでいる。相対量スクロール等を行う側はこの name と選択中 name の一致を確認し、
+   * 古い geom での二重反応を避ける。
+   */
+  name: string
   /** ビューポート基準（fixed/PC 近傍配置に使う）。 */
   viewportLeft: number
   viewportTop: number

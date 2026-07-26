@@ -196,7 +196,7 @@ export function MinutesFieldInspector({
       )}
 
       {/* NudgeControls 1 個呼び + sizeSlot で第2列を fontSize UI に差替え
-          + extra で「そろえる」列の中央寄せ下に「この項目を削除」を縦ぶら下げ。
+          + extra で「そろえる」列の中央寄せ下に「削除」を縦ぶら下げ。
           結果: PC compact = 縦 3 段 (位置 → 大きさ → 中央寄せ+削除) /
           スマホ dense = 横 3 カラム (位置 | 大きさ | 中央寄せ+削除) で templates と完全同型。 */}
       <NudgeControls
@@ -263,7 +263,7 @@ export function MinutesFieldInspector({
               (small ? 'h-10' : 'h-11')
             }
           >
-            この項目を削除
+            削除
           </button>
         }
       />

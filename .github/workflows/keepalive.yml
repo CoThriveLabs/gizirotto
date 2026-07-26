@@ -1,0 +1,57 @@
+name: keepalive
+
+# ping.yml はアプリ経由(production専用)、こちらは Supabase REST 直叩き(production+staging)
+on:
+  schedule:
+    - cron: '0 3 * * 4' # 毎週木曜 03:00 UTC
+  workflow_dispatch:
+
+# checkout も API 操作も行わないため GITHUB_TOKEN に権限を与えない
+permissions: {}
+
+jobs:
+  ping-production:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Curl Supabase REST (production)
+        env:
+          SUPABASE_URL: ${{ vars.SUPABASE_PROD_URL }}
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_PROD_ANON_KEY }}
+        run: |
+          if [ -z "$SUPABASE_URL" ]; then
+            echo "vars.SUPABASE_PROD_URL is not set"
+            exit 1
+          fi
+          if [ -z "$SUPABASE_ANON_KEY" ]; then
+            echo "secrets.SUPABASE_PROD_ANON_KEY is not set"
+            exit 1
+          fi
+          # /rest/v1/ のルートは anon key だけでは 401 を返すため、実テーブルへの
+          # 最小 SELECT で疎通する（apikey と Authorization の両ヘッダーが必要）。
+          curl -fsS \
+            -H "apikey: ${SUPABASE_ANON_KEY}" \
+            -H "Authorization: Bearer ${SUPABASE_ANON_KEY}" \
+            "${SUPABASE_URL%/}/rest/v1/templates?select=id&limit=1"
+
+  ping-staging:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Curl Supabase REST (staging)
+        env:
+          SUPABASE_URL: ${{ vars.SUPABASE_STAGING_URL }}
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_STAGING_ANON_KEY }}
+        run: |
+          if [ -z "$SUPABASE_URL" ]; then
+            echo "vars.SUPABASE_STAGING_URL is not set, skipping"
+            exit 0
+          fi
+          if [ -z "$SUPABASE_ANON_KEY" ]; then
+            echo "secrets.SUPABASE_STAGING_ANON_KEY is not set, skipping"
+            exit 0
+          fi
+          # /rest/v1/ のルートは anon key だけでは 401 を返すため、実テーブルへの
+          # 最小 SELECT で疎通する（apikey と Authorization の両ヘッダーが必要）。
+          curl -fsS \
+            -H "apikey: ${SUPABASE_ANON_KEY}" \
+            -H "Authorization: Bearer ${SUPABASE_ANON_KEY}" \
+            "${SUPABASE_URL%/}/rest/v1/templates?select=id&limit=1"

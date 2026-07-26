@@ -21,7 +21,6 @@
  * ブラウザバンドルにネイティブ依存が混入しない。
  */
 import { useEffect, useRef, useState } from 'react'
-import { useRouter } from 'next/navigation'
 import {
   type BboxOverrides,
 } from '@/lib/pdf-output/field-override'
@@ -119,7 +118,6 @@ export function AdjustView({
   onGuestSave,
   guestTurnstileGate,
 }: Props) {
-  const router = useRouter()
   const { showToast } = useToast()
 
   // chat 振分失敗時 warning を初回マウントで toast 表示し sessionStorage 消費（1 回のみ）。
@@ -139,7 +137,8 @@ export function AdjustView({
   const [zoom, setZoom] = useState(1)
   const [pdfDisplayWidth, setPdfDisplayWidth] = useState<number | null>(null)
   const [showGrid, setShowGrid] = useState(false)
-  // selectionGeom は BboxPane が内部的にラベル左上表示に使う。本体側では現状未使用（将来用）。
+  // selectionGeom は BboxPane が内部的にラベル左上表示に使うほか、AdjustViewLayout の
+  // スマホ用モーダル自動スクロール（選択枠がモーダルに隠れないための scrollBy 計算）にも使う。
   const [selectionGeom, setSelectionGeom] = useState<SelectionGeom | null>(null)
 
   // textarea ref は BboxPane と Inspector の両方が触るため本体管理。autoFocus effect は hook 内。
@@ -267,7 +266,6 @@ export function AdjustView({
         guestMode,
         minuteId,
         onBackToViewerClick: handleBackToViewerClick,
-        onCancel: () => router.back(),
         dirty,
       }}
       view={{

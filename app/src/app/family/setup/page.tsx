@@ -1,11 +1,21 @@
 import Link from 'next/link'
+import { sanitizeRelativeNext } from '@/lib/safe-next'
 
 export const metadata = {
   title: '家族を作る・参加する',
   robots: { index: false, follow: false },
 }
 
-export default function FamilySetupPage() {
+export default async function FamilySetupPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ next?: string }>
+}) {
+  const { next } = await searchParams
+  // next はサーバ側で検証済みの文字列だけをリンクに使う（open redirect 対策）。
+  const safeNext = sanitizeRelativeNext(next)
+  const nextQuery = safeNext ? `?next=${encodeURIComponent(safeNext)}` : ''
+
   return (
     <main className="min-h-screen flex items-center justify-center px-4 py-8">
       <div className="max-w-md w-full space-y-6">
@@ -19,13 +29,13 @@ export default function FamilySetupPage() {
         </div>
         <div className="space-y-3">
           <Link
-            href="/family/create"
+            href={`/family/create${nextQuery}`}
             className="block w-full text-center bg-gizirotto-blue-500 hover:bg-gizirotto-blue-700 text-white font-medium py-3 rounded"
           >
             家族を作る
           </Link>
           <Link
-            href="/family/join"
+            href={`/family/join${nextQuery}`}
             className="block w-full text-center border border-gizirotto-blue-500 text-gizirotto-blue-700 hover:bg-gizirotto-blue-50 font-medium py-3 rounded"
           >
             家族に参加する

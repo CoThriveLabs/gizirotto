@@ -1,1 +1,1 @@
-alter table templates add column if not exists origin_format text;
+-- tombstoned: 内容は 20260526112403_remote_schema.sql の baseline に統合済み。原本は supabase/migrations_archive/ 参照。
